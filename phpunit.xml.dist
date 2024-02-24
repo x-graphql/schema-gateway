@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="./vendor/phpunit/phpunit/phpunit.xsd"
+         cacheResultFile="./phpunit.result.cache"
+         colors="true">
+
+    <testsuites>
+        <testsuite name="unit-tests">
+            <directory>./tests</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory suffix=".php">src/</directory>
+        </include>
+    </source>
+
+    <coverage>
+        <report>
+            <clover outputFile="clover.xml"/>
+            <html outputDirectory="coverage" />
+        </report>
+    </coverage>
+
+    <php>
+        <!-- E_ALL & ~E_DEPRECATED -->
+        <ini name="error_reporting" value="24575"/>
+    </php>
+
+</phpunit>

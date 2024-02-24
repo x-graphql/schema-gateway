@@ -1,0 +1,37 @@
+{
+    "name": "x-graphql/schema-gateway",
+    "description": "Merging all sub schemas into one and add relationships for them",
+    "type": "library",
+    "require-dev": {
+        "nyholm/psr7": "^1.8",
+        "phpunit/phpunit": "^11.0",
+        "symfony/http-client": "^7.0",
+        "symplify/easy-coding-standard": "^12.1",
+        "x-graphql/http-schema": "^0.2.0"
+    },
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "XGraphQL\\SchemaGateway\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "XGraphQL\\SchemaGateway\\Test\\": "tests/"
+        }
+    },
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=8.2",
+        "psr/simple-cache": "^2.0 || ^3.0",
+        "webonyx/graphql-php": "^15.9",
+        "x-graphql/delegate-execution": "^0.4.0",
+        "x-graphql/utils": ">=0.2.0"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": false
+        }
+    }
+}
