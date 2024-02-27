@@ -10,22 +10,32 @@ use GraphQL\Language\AST\FieldDefinitionNode;
 use GraphQL\Language\AST\StringValueNode;
 use GraphQL\Language\DirectiveLocation;
 
-final class DelegateDirective
+final readonly class DelegateDirective
 {
     public const NAME = 'delegate';
 
-    public static function definition(): string
+    public function __construct(public string $subSchema, public string $operation, public string $operationField)
     {
-        return sprintf('directive @%s(subSchema: String!) on %s', self::NAME, DirectiveLocation::FIELD_DEFINITION);
     }
 
-    public static function findSubSchema(FieldDefinitionNode $node): ?string
+    public static function definition(): string
+    {
+        return sprintf(
+            'directive @%s(subSchema: String!, operation: String!, operationField: String!) on %s',
+            self::NAME,
+            DirectiveLocation::FIELD_DEFINITION
+        );
+    }
+
+    public static function find(FieldDefinitionNode $node): ?self
     {
         foreach ($node->directives as $directive) {
             /** @var DirectiveNode $directive */
             if ($directive->name->value !== self::NAME) {
                 continue;
             }
+
+            $argsValues = [];
 
             foreach ($directive->arguments as $arg) {
                 /** @var ArgumentNode $arg */
@@ -34,10 +44,10 @@ final class DelegateDirective
 
                 assert($value instanceof StringValueNode);
 
-                if ($name === 'subSchema') {
-                    return $value->value;
-                }
+                $argsValues[$name] = $value->value;
             }
+
+            return new self(...$argsValues);
         }
 
         return null;

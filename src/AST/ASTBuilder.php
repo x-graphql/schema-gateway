@@ -24,15 +24,11 @@ use XGraphQL\SchemaGateway\Exception\RuntimeException;
 use XGraphQL\SchemaGateway\RelationOperation;
 use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\RelationRegistry;
-use XGraphQL\SchemaGateway\SubSchema;
+use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
 final readonly class ASTBuilder
 {
-    /**
-     * @param SubSchema[] $subSchemas
-     * @param Relation[] $relations
-     */
-    public function __construct(private iterable $subSchemas, private RelationRegistry $relations)
+    public function __construct(private SubSchemaRegistry $subSchemaRegistry, private RelationRegistry $relationRegistry)
     {
     }
 
@@ -45,7 +41,6 @@ final readonly class ASTBuilder
                 $this->defineOperationTypes(),
                 $this->defineTypes(),
                 DelegateDirective::definition(),
-                RelationDirective::definition(),
             ]
         );
 
@@ -69,7 +64,7 @@ final readonly class ASTBuilder
     {
         $directives = $schemaDirectives = [];
 
-        foreach ($this->subSchemas as $subSchema) {
+        foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             foreach ($subSchema->delegator->getSchema()->getDirectives() as $directive) {
                 $name = $directive->name;
                 $compareWith = $directives[$name] ?? null;
@@ -112,7 +107,7 @@ final readonly class ASTBuilder
         $schemaFields = [];
         $fields = new NodeList([]);
 
-        foreach ($this->subSchemas as $subSchema) {
+        foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             $type = $subSchema->delegator->getSchema()->getOperationType($operation);
 
             if (null === $type) {
@@ -144,9 +139,11 @@ final readonly class ASTBuilder
                 $fields[$fieldName] = $field;
                 $field->directives = Parser::directives(
                     sprintf(
-                        '@%s(subSchema: "%s")',
+                        '@%s(subSchema: "%s", operation: "%s", operationField: "%s")',
                         DelegateDirective::NAME,
                         $subSchema->name,
+                        $operation,
+                        $fieldName,
                     )
                 );
             }
@@ -166,7 +163,7 @@ final readonly class ASTBuilder
     {
         $types = $schemaTypes = [];
 
-        foreach ($this->subSchemas as $subSchema) {
+        foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             $schema = $subSchema->delegator->getSchema();
             $queryType = $schema->getQueryType();
             $mutationType = $schema->getMutationType();
@@ -207,7 +204,7 @@ final readonly class ASTBuilder
      */
     private function addTypesRelations(array $types): void
     {
-        foreach ($this->relations as $relation) {
+        foreach ($this->relationRegistry->relations as $relation) {
             if (in_array($relation->onType, RelationOperation::values(), true)) {
                 throw new RuntimeException(
                     sprintf('Add relations on `%s` operation type are not supported!', $relation->onType)
@@ -244,7 +241,7 @@ final readonly class ASTBuilder
             if ($existField->name->value === $fieldName) {
                 throw new LogicException(
                     sprintf(
-                        'Duplicated field `%s` on type `%s`',
+                        'Duplicated relation field `%s` on type `%s`',
                         $existField->name->value,
                         $type->name->value
                     )
@@ -298,15 +295,6 @@ final readonly class ASTBuilder
         }
 
         $relationDef->arguments->reindex();
-
-        $relationDef->directives = Parser::directives(
-            sprintf(
-                '@%s(operation: "%s", field: "%s")',
-                RelationDirective::NAME,
-                $relation->operation->value,
-                $relation->operationField,
-            )
-        );
 
         return $relationDef;
     }
