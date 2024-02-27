@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace XGraphQL\SchemaGateway\Relation;
+namespace XGraphQL\SchemaGateway;
 
-enum OperationType: string
+enum RelationOperation: string
 {
     case QUERY = 'Query';
 

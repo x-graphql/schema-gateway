@@ -21,8 +21,9 @@ use GraphQL\Validator\DocumentValidator;
 use XGraphQL\SchemaGateway\Exception\ConflictException;
 use XGraphQL\SchemaGateway\Exception\LogicException;
 use XGraphQL\SchemaGateway\Exception\RuntimeException;
-use XGraphQL\SchemaGateway\Relation\OperationType;
-use XGraphQL\SchemaGateway\Relation\Relation;
+use XGraphQL\SchemaGateway\RelationOperation;
+use XGraphQL\SchemaGateway\Relation;
+use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchema;
 
 final readonly class ASTBuilder
@@ -31,7 +32,7 @@ final readonly class ASTBuilder
      * @param SubSchema[] $subSchemas
      * @param Relation[] $relations
      */
-    public function __construct(private iterable $subSchemas, private iterable $relations)
+    public function __construct(private iterable $subSchemas, private RelationRegistry $relations)
     {
     }
 
@@ -42,7 +43,9 @@ final readonly class ASTBuilder
             [
                 $this->defineDirectives(),
                 $this->defineOperationTypes(),
-                $this->defineTypes()
+                $this->defineTypes(),
+                DelegateDirective::definition(),
+                RelationDirective::definition(),
             ]
         );
 
@@ -139,7 +142,13 @@ final readonly class ASTBuilder
                 }
 
                 $fields[$fieldName] = $field;
-                $field->directives = Parser::directives(sprintf('@delegate(schema: "%s")', $subSchema->name));
+                $field->directives = Parser::directives(
+                    sprintf(
+                        '@%s(subSchema: "%s")',
+                        DelegateDirective::NAME,
+                        $subSchema->name,
+                    )
+                );
             }
         }
 
@@ -199,12 +208,14 @@ final readonly class ASTBuilder
     private function addTypesRelations(array $types): void
     {
         foreach ($this->relations as $relation) {
-            if (in_array($relation->onType, OperationType::values(), true)) {
-                throw new RuntimeException(sprintf('Add relations on `%s` operation type are not supported!', $relation->onType));
+            if (in_array($relation->onType, RelationOperation::values(), true)) {
+                throw new RuntimeException(
+                    sprintf('Add relations on `%s` operation type are not supported!', $relation->onType)
+                );
             }
 
             $onType = $types[$relation->onType] ?? null;
-            $operationType = $types[$relation->operationType->value] ?? null;
+            $operationType = $types[$relation->operation->value] ?? null;
 
             if (null === $onType || null === $operationType) {
                 throw new LogicException(
@@ -216,15 +227,13 @@ final readonly class ASTBuilder
                 );
             }
 
-            assert($onType instanceof ObjectTypeDefinitionNode);
-
-            assert($operationType instanceof ObjectTypeDefinitionNode);
+            if (!$onType instanceof ObjectTypeDefinitionNode || !$operationType instanceof ObjectTypeDefinitionNode) {
+                throw new RuntimeException('Only support to add relation between object types');
+            }
 
             $this->duplicateRelationFieldGuard($onType, $relation->field);
 
-            $onType->fields[] = $clonedField = $this->cloneOperationField($operationType, $relation->rootField);
-
-            $clonedField->name->value = $relation->field;
+            $onType->fields[] = $this->makeRelationField($operationType, $relation);
         }
     }
 
@@ -244,52 +253,61 @@ final readonly class ASTBuilder
         }
     }
 
-    private function cloneOperationField(ObjectTypeDefinitionNode $operationType, string $field): FieldDefinitionNode
+    private function makeRelationField(ObjectTypeDefinitionNode $operationType, Relation $relation): FieldDefinitionNode
     {
-        $clonedFieldDefinition = null;
+        $relationDef = null;
 
-        foreach ($operationType->fields as $fieldDefinition) {
-            /** @var FieldDefinitionNode $fieldDefinition */
+        foreach ($operationType->fields as $fieldDef) {
+            /** @var FieldDefinitionNode $fieldDef */
 
-            if ($fieldDefinition->name->value !== $field) {
+            if ($fieldDef->name->value !== $relation->operationField) {
                 continue;
             }
 
-            $clonedFieldDefinition = $fieldDefinition->cloneDeep();
-
-            foreach ($clonedFieldDefinition->arguments as $argument) {
-                /** @var InputValueDefinitionNode $argument */
-
-                if ($argument->type instanceof NonNullTypeNode) {
-                    //// All argument of relation field can be null,
-                    ///  arg resolver will resolve mandatory arg on runtime.
-                    $argument->type = $argument->type->type;
-                }
-            }
-
-            $clonedFieldDefinition->directives = Parser::directives(
-                sprintf(
-                    '@%s(operation: "%s", field: "%s")',
-                    RelationDirective::NAME,
-                    $operationType->getName()->value,
-                    $field,
-                )
-            );
+            $relationDef = $fieldDef->cloneDeep();
 
             break;
         }
 
-        if (null === $clonedFieldDefinition) {
+        if (null === $relationDef) {
             throw new LogicException(
                 sprintf(
                     'Not found field name `%s` on operation type `%s`',
-                    $field,
+                    $relation->operationField,
                     $operationType->name->value,
                 )
             );
         }
 
+        $relationDef->name->value = $relation->field;
 
-        return $clonedFieldDefinition;
+        foreach ($relationDef->arguments as $pos => $argument) {
+            /** @var InputValueDefinitionNode $argument */
+
+            if (!$relation->argResolver->shouldKeep($argument->name->value, $relation)) {
+                unset($relationDef->arguments[$pos]);
+
+                continue;
+            }
+
+            if ($argument->type instanceof NonNullTypeNode) {
+                //// All argument of relation field can be null,
+                ///  arg resolver will have responsible to resolve mandatory arg on runtime.
+                $argument->type = $argument->type->type;
+            }
+        }
+
+        $relationDef->arguments->reindex();
+
+        $relationDef->directives = Parser::directives(
+            sprintf(
+                '@%s(operation: "%s", field: "%s")',
+                RelationDirective::NAME,
+                $relation->operation->value,
+                $relation->operationField,
+            )
+        );
+
+        return $relationDef;
     }
 }
