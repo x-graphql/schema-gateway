@@ -6,11 +6,11 @@ namespace XGraphQL\SchemaGateway;
 
 enum RelationOperation: string
 {
-    case QUERY = 'Query';
+    case QUERY = 'query';
 
-    case MUTATION = 'Mutation';
+    case MUTATION = 'mutation';
 
-    case SUBSCRIPTION = 'Subscription';
+    case SUBSCRIPTION = 'subscription';
 
     /**
      * @return string[]

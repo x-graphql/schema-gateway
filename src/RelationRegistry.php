@@ -32,17 +32,21 @@ final class RelationRegistry
         $this->mapping = $mapping;
     }
 
-    public function getRelationByTypeField(string $type, string $field): Relation
+    public function getRelation(string $onType, string $field): Relation
     {
         $this->prepareMapping();
 
-        if (!isset($this->mapping[$type][$field])) {
+        if (!isset($this->mapping[$onType][$field])) {
             throw new InvalidArgumentException(
-                sprintf('Not found relation field: `%s` on type: `%s`', $field, $type)
+                sprintf('Not found relation field: `%s` on type: `%s`', $field, $onType)
             );
         }
 
-        return $this->mapping[$type][$field];
+        return $this->mapping[$onType][$field];
     }
 
+    public function hasRelation(string $onType, string $field): bool
+    {
+        return isset($this->mapping[$onType][$field]);
+    }
 }

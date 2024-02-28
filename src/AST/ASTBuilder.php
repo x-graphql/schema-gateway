@@ -28,8 +28,10 @@ use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
 final readonly class ASTBuilder
 {
-    public function __construct(private SubSchemaRegistry $subSchemaRegistry, private RelationRegistry $relationRegistry)
-    {
+    public function __construct(
+        private SubSchemaRegistry $subSchemaRegistry,
+        private RelationRegistry $relationRegistry
+    ) {
     }
 
     public function build(): DocumentNode
@@ -205,7 +207,7 @@ final readonly class ASTBuilder
     private function addTypesRelations(array $types): void
     {
         foreach ($this->relationRegistry->relations as $relation) {
-            if (in_array($relation->onType, RelationOperation::values(), true)) {
+            if (in_array($relation->onType, ['Query', 'Mutation', 'Subscription'], true)) {
                 throw new RuntimeException(
                     sprintf('Add relations on `%s` operation type are not supported!', $relation->onType)
                 );

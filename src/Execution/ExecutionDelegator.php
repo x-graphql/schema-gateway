@@ -12,15 +12,16 @@ use GraphQL\Type\Schema;
 use XGraphQL\DelegateExecution\ExecutionDelegatorInterface;
 use XGraphQL\SchemaGateway\Exception\InvalidArgumentException;
 use XGraphQL\SchemaGateway\Relation;
+use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchema;
 
 final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
 {
     /**
-     * @param SubSchema[] $subSchemas
-     * @param Relation[] $relations
+     * @param iterable $subSchemas
+     * @param RelationRegistry $relationRegistry
      */
-    public function __construct(private iterable $subSchemas, private iterable $relations)
+    public function __construct(private iterable $subSchemas, private RelationRegistry $relationRegistry)
     {
     }
 
@@ -30,13 +31,10 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $querySplitter = new QuerySplitter(
-            $this->relations,
-            $executionSchema,
-            $operation,
-            $fragments,
-            $variables,
-        );
+        $query = new SubQuery($operation, $fragments, $variables, null);
+
+        $querySplitter = new QuerySplitter($executionSchema, $this->relationRegistry, $query);
+
         $promises = [];
 
         foreach ($querySplitter->split() as $subQuery) {
