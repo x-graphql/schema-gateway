@@ -41,6 +41,8 @@ final class SubSchemaRegistry
 
     public function hasSubSchema(string $name): bool
     {
+        $this->prepareMapping();
+
         return isset($this->mapping[$name]);
     }
 }

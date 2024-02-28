@@ -13,7 +13,7 @@ final readonly class SubQuery
         public array $fragments,
         public array $variables,
         public string $subSchemaName,
-        public \ArrayObject $relationFields,
+        public array $relationFields,
     ) {
     }
 }

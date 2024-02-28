@@ -8,21 +8,21 @@ use GraphQL\Executor\ExecutionResult;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Language\AST\OperationDefinitionNode;
+use GraphQL\Language\Printer;
 use GraphQL\Type\Schema;
 use XGraphQL\DelegateExecution\ExecutionDelegatorInterface;
 use XGraphQL\SchemaGateway\Exception\InvalidArgumentException;
 use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchema;
+use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
 final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
 {
-    /**
-     * @param iterable $subSchemas
-     * @param RelationRegistry $relationRegistry
-     */
-    public function __construct(private iterable $subSchemas, private RelationRegistry $relationRegistry)
-    {
+    public function __construct(
+        private SubSchemaRegistry $subSchemaRegistry,
+        private RelationRegistry $relationRegistry
+    ) {
     }
 
     public function delegate(
@@ -31,20 +31,23 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $query = new SubQuery($operation, $fragments, $variables, null);
-
-        $querySplitter = new QuerySplitter($executionSchema, $this->relationRegistry, $query);
+        $operationType = $executionSchema->getOperationType($operation->operation);
+        $operationSelectionSet = $operation->getSelectionSet();
+        $querySplitter = new QuerySplitter($executionSchema, $operation, $fragments, $variables, $this->relationRegistry);
 
         $promises = [];
 
-        foreach ($querySplitter->split() as $subQuery) {
-            $subSchema = $this->getSubSchemaByName($subQuery->subSchemaName);
-            $promises[] = $subSchema->delegator->delegate(
-                $executionSchema,
-                $subQuery->operation,
-                $subQuery->fragments,
-                $subQuery->variables
-            );
+        foreach ($querySplitter->split($operationType, $operationSelectionSet) as $subQuery) {
+            $subSchema = $this->subSchemaRegistry->getSubSchema($subQuery->subSchemaName);
+            $promises[] = $subSchema
+                ->delegator
+                ->delegate(
+                    $executionSchema,
+                    $subQuery->operation,
+                    $subQuery->fragments,
+                    $subQuery->variables
+                )
+                ->then(fn(ExecutionResult $result) => $this->delegateSubQueries($result, $subQuery));
         }
 
         return $this
@@ -55,7 +58,7 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
 
     public function getPromiseAdapter(): PromiseAdapter
     {
-        foreach ($this->subSchemas as $subSchema) {
+        foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             return $subSchema->delegator->getPromiseAdapter();
         }
     }
@@ -88,14 +91,7 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         );
     }
 
-    private function getSubSchemaByName(string $name): SubSchema
+    private function delegateSubQueries(ExecutionResult $result, SubQuery $query)
     {
-        foreach ($this->subSchemas as $subSchema) {
-            if ($subSchema->name === $name) {
-                return $subSchema;
-            }
-        }
-
-        throw new InvalidArgumentException(sprintf('Sub schema `%s` does not exists', $name));
     }
 }

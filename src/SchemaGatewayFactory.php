@@ -26,7 +26,7 @@ final class SchemaGatewayFactory
 
         $schema = BuildSchema::buildAST($ast, options: ['assumeValidSDL' => true]);
 
-        $delegator = new ExecutionDelegator($subSchemas, $relations);
+        $delegator = new ExecutionDelegator($subSchemasRegistry, $relationsRegistry);
 
         Execution::delegate($schema, $delegator);
 

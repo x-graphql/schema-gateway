@@ -11,12 +11,4 @@ enum RelationOperation: string
     case MUTATION = 'mutation';
 
     case SUBSCRIPTION = 'subscription';
-
-    /**
-     * @return string[]
-     */
-    public static function values(): array
-    {
-        return array_map(fn(self $type) => $type->value, self::cases());
-    }
 }

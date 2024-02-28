@@ -47,6 +47,8 @@ final class RelationRegistry
 
     public function hasRelation(string $onType, string $field): bool
     {
+        $this->prepareMapping();
+
         return isset($this->mapping[$onType][$field]);
     }
 }

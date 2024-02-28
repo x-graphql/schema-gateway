@@ -21,7 +21,6 @@ use GraphQL\Validator\DocumentValidator;
 use XGraphQL\SchemaGateway\Exception\ConflictException;
 use XGraphQL\SchemaGateway\Exception\LogicException;
 use XGraphQL\SchemaGateway\Exception\RuntimeException;
-use XGraphQL\SchemaGateway\RelationOperation;
 use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
@@ -214,7 +213,7 @@ final readonly class ASTBuilder
             }
 
             $onType = $types[$relation->onType] ?? null;
-            $operationType = $types[$relation->operation->value] ?? null;
+            $operationType = $types[ucfirst($relation->operation->value)] ?? null;
 
             if (null === $onType || null === $operationType) {
                 throw new LogicException(

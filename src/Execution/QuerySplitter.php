@@ -8,32 +8,36 @@ use GraphQL\Language\AST\FieldNode;
 use GraphQL\Language\AST\FragmentDefinitionNode;
 use GraphQL\Language\AST\FragmentSpreadNode;
 use GraphQL\Language\AST\InlineFragmentNode;
+use GraphQL\Language\AST\Node;
 use GraphQL\Language\AST\NodeList;
 use GraphQL\Language\AST\OperationDefinitionNode;
 use GraphQL\Language\AST\SelectionSetNode;
 use GraphQL\Language\AST\VariableDefinitionNode;
 use GraphQL\Language\Parser;
 use GraphQL\Type\Definition\HasFieldsType;
+use GraphQL\Type\Definition\ObjectType;
 use GraphQL\Type\Definition\Type;
 use GraphQL\Type\Definition\WrappingType;
 use GraphQL\Type\Introspection;
 use GraphQL\Type\Schema;
 use XGraphQL\SchemaGateway\AST\DelegateDirective;
+use XGraphQL\SchemaGateway\Relation;
+use XGraphQL\SchemaGateway\RelationMandatorySelectionSetProviderInterface;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\Utils\Variable;
 
 final readonly class QuerySplitter
 {
     /**
-     * @param Schema $schema
-     * @param OperationDefinitionNode $operation
+     * @param Schema $executionSchema
+     * @param OperationDefinitionNode $executionOperation
      * @param array<string, FragmentDefinitionNode> $fragments
      * @param array<string, mixed> $variables
      * @param RelationRegistry $relationRegistry
      */
     public function __construct(
-        private Schema $schema,
-        private OperationDefinitionNode $operation,
+        private Schema $executionSchema,
+        private OperationDefinitionNode $executionOperation,
         private array $fragments,
         private array $variables,
         private RelationRegistry $relationRegistry,
@@ -44,46 +48,32 @@ final readonly class QuerySplitter
      * @return iterable<SubQuery>
      * @throws \JsonException
      */
-    public function split(): iterable
+    public function split(ObjectType $parentType, SelectionSetNode $selectionSet): iterable
     {
-        $parentType = $this->schema->getOperationType($this->operation->operation);
-        $selectionSet = $this->operation->selectionSet;
-
-        /** @var \ArrayObject<string, array> $relationFields */
-        $relationFields = new \ArrayObject();
-
-        $subSchemaOperationSelections = $this->splitSelections(
-            $parentType,
-            $selectionSet,
-            $relationFields
-        );
+        $subSchemaOperationSelections = $this->splitSelections($parentType, $selectionSet);
 
         foreach ($subSchemaOperationSelections as $subSchema => $operations) {
-            foreach ($operations as $operation => $pathSelections) {
-                foreach ($pathSelections as $path => $selections) {
-                    $selectionSet = new SelectionSetNode(
-                        [
-                            'selections' => $selections,
-                        ],
-                    );
+            foreach ($operations as $operation => $selections) {
+                $operationType = $this->executionSchema->getOperationType($operation);
+                $selectionSet = new SelectionSetNode(
+                    [
+                        'selections' => new NodeList(
+                            array_map(
+                                fn(Node $node) => $node->cloneDeep(),
+                                array_values(array_unique($selections)),
+                            )
+                        ),
+                    ],
+                );
 
-                    $this->removeDifferenceSubSchemaFields($parentType, $selectionSet, $subSchema);
+                $this->removeDifferenceSubSchemaFields($operationType, $selectionSet, $subSchema);
 
-                    $fragments = $this->collectFragments($selectionSet, $subSchema);
-                    $variables = $this->collectVariables($selectionSet, $fragments);
-                    $operation = $this->createOperation($operation, $selectionSet, $variables);
-                    $subRelationFields = new \ArrayObject();
+                $fragments = $this->collectFragments($operationType, $selectionSet, $subSchema);
+                $relationFields = $this->collectRelationFields($operationType, $selectionSet, $fragments);
+                $variables = $this->collectVariables($selectionSet, $fragments);
+                $operation = $this->createOperation($operation, $selectionSet, $variables);
 
-                    foreach ($relationFields as $relationPath => $relationField) {
-                        if (str_starts_with($relationPath, $path)) {
-                            $subRelationFields[$relationPath] = $relationField;
-                        }
-                    }
-
-                    $query = new SubQuery($operation, $fragments, $variables, $subSchema, $subRelationFields);
-
-                    yield $path => $query;
-                }
+                yield new SubQuery($operation, $fragments, $variables, $subSchema, $relationFields);
             }
         }
     }
@@ -91,18 +81,15 @@ final readonly class QuerySplitter
     private function splitSelections(
         Type $parentType,
         SelectionSetNode $selectionSet,
-        \ArrayObject $relationFields,
         InlineFragmentNode|FragmentSpreadNode $rootFragmentSelection = null,
-        string $path = '',
     ): array {
         if ($parentType instanceof WrappingType) {
             $parentType = $parentType->getInnermostType();
         }
 
-        $parentTypename = $parentType->name();
         $selections = [];
 
-        foreach ($selectionSet->selections as $pos => $selection) {
+        foreach ($selectionSet->selections as $selection) {
             /** @var FieldNode|FragmentSpreadNode|InlineFragmentNode $selection */
 
             $type = $subSelectionSet = null;
@@ -110,16 +97,25 @@ final readonly class QuerySplitter
             if ($selection instanceof FragmentSpreadNode) {
                 $fragment = $this->fragments[$selection->name->value];
                 $typename = $fragment->typeCondition->name->value;
-                $type = $this->schema->getType($typename);
+                $type = $this->executionSchema->getType($typename);
                 $subSelectionSet = $fragment->selectionSet;
                 $rootFragmentSelection ??= $selection;
             }
 
             if ($selection instanceof InlineFragmentNode) {
                 $typename = $selection->typeCondition->name->value;
-                $type = $this->schema->getType($typename);
+                $type = $this->executionSchema->getType($typename);
                 $subSelectionSet = $selection->selectionSet;
                 $rootFragmentSelection ??= $selection;
+            }
+
+            if (null !== $type && null !== $subSelectionSet) {
+                $selections = array_merge_recursive(
+                    $selections,
+                    $this->splitSelections($type, $subSelectionSet, $rootFragmentSelection),
+                );
+
+                continue;
             }
 
             if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
@@ -128,62 +124,27 @@ final readonly class QuerySplitter
                 $fieldName = $selection->name->value;
                 $field = $parentType->getField($fieldName);
 
-                if ($this->relationRegistry->hasRelation($parentTypename, $fieldName)) {
-                    /// If this field is relation field, we need to replace it with mandatory selection set
-                    /// and resolve it in next queries.
-                    $relation = $this->relationRegistry->getRelation($parentTypename, $fieldName);
-                    $relationSelectionSet = $relation->argResolver->getMandatorySelectionSet($relation);
+                $delegateDirective = DelegateDirective::find($field->astNode);
+                $subSchema = $delegateDirective->subSchema;
+                $operation = $delegateDirective->operation;
+                $selections[$subSchema][$operation] ??= [];
 
-                    $relationFields[$path] = [$relation, $selection];
-
-                    $selectionSet->selections[$pos] = Parser::fragment(
-                        sprintf('... on %s %s', $parentTypename, $relationSelectionSet)
-                    );
-
-                    continue;
+                if (null === $rootFragmentSelection) {
+                    $selections[$subSchema][$operation][] = $selection;
+                } else {
+                    $selections[$subSchema][$operation][] = $rootFragmentSelection;
                 }
-
-                $ast = $field->astNode;
-                $delegateDirective = null !== $ast ? DelegateDirective::find($ast) : null;
-
-                if (null !== $delegateDirective) {
-                    $subSchema = $delegateDirective->subSchema;
-                    $operation = $delegateDirective->operation;
-                    $selections[$subSchema][$operation][$path] ??= [];
-
-                    if (null === $rootFragmentSelection) {
-                        $selections[$subSchema][$operation][$path][] = $selection->cloneDeep();
-                    } else {
-                        $selections[$subSchema][$operation][$path][] = $rootFragmentSelection->cloneDeep();
-                    }
-                }
-
-                /// If it is not relation field, recursive to lookup
-                $type = $field->getType();
-                $subSelectionSet = $selection->selectionSet;
-                $fieldAlias = $selection->alias?->value;
-                $path = sprintf('%s.%s', $path, $fieldAlias ?? $fieldName);
-            }
-
-            if (null !== $type && null !== $subSelectionSet) {
-                $selections = array_merge_recursive(
-                    $selections,
-                    $this->splitSelections(
-                        $type,
-                        $subSelectionSet,
-                        $relationFields,
-                        $rootFragmentSelection,
-                        $path,
-                    ),
-                );
             }
         }
 
         return $selections;
     }
 
-    private function collectFragments(SelectionSetNode $selectionSet, string $subSchemaName): array
-    {
+    private function collectFragments(
+        ObjectType $operationType,
+        SelectionSetNode $selectionSet,
+        string $subSchemaName
+    ): array {
         /** @var array<string, FragmentDefinitionNode> $fragments */
         $fragments = [];
 
@@ -194,11 +155,11 @@ final readonly class QuerySplitter
                 $name = $selection->name->value;
                 $fragment = $fragments[$name] = $this->fragments[$name]->cloneDeep();
                 $typename = $fragment->typeCondition->name->value;
-                $type = $this->schema->getType($typename);
-
-                $this->removeDifferenceSubSchemaFields($type, $fragment->selectionSet, $subSchemaName);
-
                 $subSelectionSet = $fragment->selectionSet;
+
+                if ($operationType === $this->executionSchema->getType($typename)) {
+                    $this->removeDifferenceSubSchemaFields($operationType, $fragment->selectionSet, $subSchemaName);
+                }
             }
 
             if ($selection instanceof InlineFragmentNode) {
@@ -210,7 +171,7 @@ final readonly class QuerySplitter
             }
 
             if (null !== $subSelectionSet) {
-                $fragments += $this->collectFragments($subSelectionSet, $subSchemaName);
+                $fragments += $this->collectFragments($operationType, $subSelectionSet, $subSchemaName);
             }
         }
 
@@ -218,37 +179,107 @@ final readonly class QuerySplitter
     }
 
     private function removeDifferenceSubSchemaFields(
-        Type $parentType,
-        SelectionSetNode $selectionSet,
+        ObjectType $operationType,
+        SelectionSetNode $operationSelectionSet,
         string $subSchemaName
     ): void {
-        if ($parentType instanceof WrappingType) {
-            $parentType = $parentType->getInnermostType();
-        }
-
-        foreach ($selectionSet->selections as $index => $selection) {
+        foreach ($operationSelectionSet->selections as $index => $selection) {
             if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
-                assert($parentType instanceof HasFieldsType);
-
                 $fieldName = $selection->name->value;
-                $field = $parentType->getField($fieldName);
-                $ast = $field->astNode;
-                $delegateDirective = null !== $ast ? DelegateDirective::find($ast) : null;
+                $field = $operationType->getField($fieldName);
+                $delegateDirective = DelegateDirective::find($field->astNode);
 
-                if (null !== $delegateDirective && $subSchemaName !== $delegateDirective->subSchema) {
-                    unset($selectionSet->selections[$index]);
+                if ($subSchemaName !== $delegateDirective->subSchema) {
+                    unset($operationSelectionSet->selections[$index]);
                 }
             }
 
             if ($selection instanceof InlineFragmentNode) {
-                $typename = $selection->typeCondition->name->value;
-                $type = $this->schema->getType($typename);
+                $this->removeDifferenceSubSchemaFields($operationType, $selection->selectionSet, $subSchemaName);
+            }
+        }
 
-                $this->removeDifferenceSubSchemaFields($type, $selection->selectionSet, $subSchemaName);
+        $operationSelectionSet->selections->reindex();
+    }
+
+    /**
+     * @param SelectionSetNode $selectionSet
+     * @param array<string, FragmentDefinitionNode> $fragments
+     * @param string $path
+     * @return array<string, array{FieldNode, Relation}>
+     */
+    private function collectRelationFields(Type $parentType, SelectionSetNode $selectionSet, array $fragments, string $path = ''): array
+    {
+        $relations = [];
+
+        if ($parentType instanceof WrappingType) {
+            $parentType = $parentType->getInnermostType();
+        }
+
+        foreach ($selectionSet->selections as $pos => $selection) {
+            $type = $subSelectionSet = null;
+
+            if ($selection instanceof InlineFragmentNode) {
+                $typename = $selection->typeCondition->name->value;
+                $type = $this->executionSchema->getType($typename);
+                $subSelectionSet = $selection->selectionSet;
+            }
+
+            if ($selection instanceof FragmentSpreadNode) {
+                $fragment = $fragments[$selection->name->value];
+                $typename = $fragment->typeCondition->name->value;
+                $type = $this->executionSchema->getType($typename);
+                $subSelectionSet = $fragments[$selection->name->value]->selectionSet;
+            }
+
+            if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
+                assert($parentType instanceof HasFieldsType);
+
+                $parentTypename = $parentType->name();
+                $fieldName = $selection->name->value;
+                $fieldAlias = $selection->alias?->value;
+                $field = $parentType->getField($fieldName);
+
+                if ($this->relationRegistry->hasRelation($parentTypename, $fieldName)) {
+                    /// Expect relation field must have delegate directive
+                    $delegateDirective = DelegateDirective::find($field->astNode);
+                    $subSchema = $delegateDirective->subSchema;
+                    $operation = $delegateDirective->operation;
+                    $relation = $this->relationRegistry->getRelation($parentTypename, $fieldName);
+                    $relations[$subSchema][$operation][$path][] = [$relation, $selection];
+
+                    if (!$relation->argResolver instanceof RelationMandatorySelectionSetProviderInterface) {
+                        unset($selectionSet->selections[$pos]);
+
+                        continue;
+                    }
+
+                    /// Replace it with mandatory fields needed to resolve args.
+                    $selectionSet->selections[$pos] = Parser::fragment(
+                        sprintf(
+                            '... on %s %s',
+                            $parentTypename,
+                            $relation->argResolver->getMandatorySelectionSet($relation)
+                        )
+                    );
+                } else {
+                    $path = ltrim(sprintf('%s.%s', $path, $fieldAlias ?? $fieldName), '.');
+                    $type = $field->getType();
+                    $subSelectionSet = $selection->selectionSet;
+                }
+            }
+
+            if (null !== $type && null !== $subSelectionSet) {
+                $relations = array_merge_recursive(
+                    $relations,
+                    $this->collectRelationFields($type, $subSelectionSet, $fragments, $path)
+                );
             }
         }
 
         $selectionSet->selections->reindex();
+
+        return $relations;
     }
 
     /**
@@ -260,7 +291,7 @@ final readonly class QuerySplitter
     {
         $variables = [];
         $names = [
-            ...Variable::getVariablesInDirectives($this->operation->directives),
+            ...Variable::getVariablesInDirectives($this->executionOperation->directives),
             ...Variable::getVariablesInFragments($fragments),
             ...Variable::getVariablesInSelectionSet($selectionSet),
         ];
@@ -278,10 +309,10 @@ final readonly class QuerySplitter
         array $variables
     ): OperationDefinitionNode {
         return new OperationDefinitionNode([
-            'name' => uniqid('x_graphql_'),
+            'name' => Parser::name(uniqid('x_graphql_')),
             'operation' => $operation,
+            'directives' => $this->executionOperation->directives->cloneDeep(),
             'selectionSet' => $selectionSet,
-            'directives' => $this->operation->directives->cloneDeep(),
             'variableDefinitions' => $this->createVariableDefinitions($variables)
         ]);
     }
@@ -290,7 +321,7 @@ final readonly class QuerySplitter
     {
         $definitions = new NodeList([]);
 
-        foreach ($this->operation->variableDefinitions as $definition) {
+        foreach ($this->executionOperation->variableDefinitions as $definition) {
             /** @var VariableDefinitionNode $definition */
             $name = $definition->variable->name->value;
 
