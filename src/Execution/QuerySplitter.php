@@ -48,13 +48,13 @@ final readonly class QuerySplitter
      * @return iterable<SubQuery>
      * @throws \JsonException
      */
-    public function split(ObjectType $parentType, SelectionSetNode $selectionSet): iterable
+    public function splitOperation(OperationDefinitionNode $operation): iterable
     {
-        $subSchemaOperationSelections = $this->splitSelections($parentType, $selectionSet);
+        $subSchemaOperationSelections = $this->splitSelections($operation, $operation->selectionSet);
 
         foreach ($subSchemaOperationSelections as $subSchema => $operations) {
             foreach ($operations as $operation => $selections) {
-                $operationType = $this->executionSchema->getOperationType($operation);
+                $subOperationType = $this->executionSchema->getOperationType($operation);
                 $selectionSet = new SelectionSetNode(
                     [
                         'selections' => new NodeList(
@@ -66,10 +66,10 @@ final readonly class QuerySplitter
                     ],
                 );
 
-                $this->removeDifferenceSubSchemaFields($operationType, $selectionSet, $subSchema);
+                $this->removeDifferenceSubSchemaFields($subOperationType, $selectionSet, $subSchema);
 
-                $fragments = $this->collectFragments($operationType, $selectionSet, $subSchema);
-                $relationFields = $this->collectRelationFields($operationType, $selectionSet, $fragments);
+                $fragments = $this->collectFragments($subOperationType, $selectionSet, $subSchema);
+                $relationFields = $this->collectRelationFields($subOperationType, $selectionSet, $fragments);
                 $variables = $this->collectVariables($selectionSet, $fragments);
                 $operation = $this->createOperation($operation, $selectionSet, $variables);
 
@@ -79,51 +79,42 @@ final readonly class QuerySplitter
     }
 
     private function splitSelections(
-        Type $parentType,
-        SelectionSetNode $selectionSet,
+        OperationDefinitionNode $operation,
+        SelectionSetNode $selectionSet = null,
         InlineFragmentNode|FragmentSpreadNode $rootFragmentSelection = null,
     ): array {
-        if ($parentType instanceof WrappingType) {
-            $parentType = $parentType->getInnermostType();
-        }
-
+        $operationType = $this->executionSchema->getOperationType($operation->operation);
+        $selectionSet ??= $operation->selectionSet;
         $selections = [];
 
         foreach ($selectionSet->selections as $selection) {
             /** @var FieldNode|FragmentSpreadNode|InlineFragmentNode $selection */
 
-            $type = $subSelectionSet = null;
+            $subSelectionSet = null;
 
-            if ($selection instanceof FragmentSpreadNode) {
-                $fragment = $this->fragments[$selection->name->value];
-                $typename = $fragment->typeCondition->name->value;
-                $type = $this->executionSchema->getType($typename);
-                $subSelectionSet = $fragment->selectionSet;
+            if ($selection instanceof FragmentSpreadNode || $selection instanceof InlineFragmentNode) {
+                /// Inline fragment and fragment spread MUST have type condition same with parent object type
                 $rootFragmentSelection ??= $selection;
-            }
 
-            if ($selection instanceof InlineFragmentNode) {
-                $typename = $selection->typeCondition->name->value;
-                $type = $this->executionSchema->getType($typename);
-                $subSelectionSet = $selection->selectionSet;
-                $rootFragmentSelection ??= $selection;
-            }
+                if ($selection instanceof FragmentSpreadNode) {
+                    $fragment = $this->fragments[$selection->name->value];
+                    $subSelectionSet = $fragment->selectionSet;
+                } else {
+                    $subSelectionSet = $selection->selectionSet;
+                }
 
-            if (null !== $type && null !== $subSelectionSet) {
                 $selections = array_merge_recursive(
                     $selections,
-                    $this->splitSelections($type, $subSelectionSet, $rootFragmentSelection),
+                    $this->splitSelections($operation, $subSelectionSet, $rootFragmentSelection),
                 );
 
                 continue;
             }
 
             if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
-                assert($parentType instanceof HasFieldsType);
-
                 $fieldName = $selection->name->value;
-                $field = $parentType->getField($fieldName);
-
+                $field = $operationType->getField($fieldName);
+                /// AST of fields of operation type MUST have delegate directive
                 $delegateDirective = DelegateDirective::find($field->astNode);
                 $subSchema = $delegateDirective->subSchema;
                 $operation = $delegateDirective->operation;

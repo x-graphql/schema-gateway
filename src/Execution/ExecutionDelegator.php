@@ -37,7 +37,7 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
 
         $promises = [];
 
-        foreach ($querySplitter->split($operationType, $operationSelectionSet) as $subQuery) {
+        foreach ($querySplitter->splitOperation($operation) as $subQuery) {
             $subSchema = $this->subSchemaRegistry->getSubSchema($subQuery->subSchemaName);
             $promises[] = $subSchema
                 ->delegator
