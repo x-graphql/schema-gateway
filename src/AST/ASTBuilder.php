@@ -116,7 +116,7 @@ final readonly class ASTBuilder
             }
 
             $sdl = SchemaPrinter::printType($type);
-            $typeDefinition = Parser::objectTypeDefinition($sdl);
+            $typeDefinition = Parser::objectTypeDefinition($sdl, ['noLocation' => true]);
 
             foreach ($typeDefinition->fields as $field) {
                 /** @var FieldDefinitionNode $field */
@@ -145,7 +145,8 @@ final readonly class ASTBuilder
                         $subSchema->name,
                         $operation,
                         $fieldName,
-                    )
+                    ),
+                    ['noLocation' => true]
                 );
             }
         }
@@ -154,7 +155,7 @@ final readonly class ASTBuilder
             return '';
         }
 
-        $definition = Parser::objectTypeDefinition(sprintf('type %s', ucfirst($operation)));
+        $definition = Parser::objectTypeDefinition(sprintf('type %s', ucfirst($operation)), ['noLocation' => true]);
         $definition->fields = $fields;
 
         return Printer::doPrint($definition);

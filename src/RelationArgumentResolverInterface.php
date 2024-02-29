@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace XGraphQL\SchemaGateway;
 
-use GraphQL\Language\AST\SelectionSetNode;
-
 interface RelationArgumentResolverInterface
 {
     /// Whether to keep arg on relation field or not.
