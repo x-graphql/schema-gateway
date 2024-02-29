@@ -31,8 +31,6 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $operationType = $executionSchema->getOperationType($operation->operation);
-        $operationSelectionSet = $operation->getSelectionSet();
         $querySplitter = new QuerySplitter($executionSchema, $operation, $fragments, $variables, $this->relationRegistry);
 
         $promises = [];
