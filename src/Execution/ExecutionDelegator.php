@@ -8,13 +8,9 @@ use GraphQL\Executor\ExecutionResult;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Language\AST\OperationDefinitionNode;
-use GraphQL\Language\Printer;
 use GraphQL\Type\Schema;
 use XGraphQL\DelegateExecution\ExecutionDelegatorInterface;
-use XGraphQL\SchemaGateway\Exception\InvalidArgumentException;
-use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\RelationRegistry;
-use XGraphQL\SchemaGateway\SubSchema;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
 final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
@@ -31,7 +27,13 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $querySplitter = new QuerySplitter($executionSchema, $operation, $fragments, $variables, $this->relationRegistry);
+        $querySplitter = new QuerySplitter(
+            $executionSchema,
+            $fragments,
+            $variables,
+            $operation->variableDefinitions,
+            $this->relationRegistry
+        );
 
         $promises = [];
 
