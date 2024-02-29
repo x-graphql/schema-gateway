@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace XGraphQL\SchemaGateway\Execution;
 
-use GraphQL\Executor\ExecutionResult;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Language\AST\OperationDefinitionNode;
@@ -21,39 +20,26 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
     ) {
     }
 
+    /**
+     * @throws \JsonException
+     */
     public function delegate(
         Schema $executionSchema,
         OperationDefinitionNode $operation,
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $querySplitter = new QuerySplitter(
+        $resolver = new QueryResolver(
             $executionSchema,
             $fragments,
             $variables,
             $operation->variableDefinitions,
-            $this->relationRegistry
+            $this->relationRegistry,
+            $this->subSchemaRegistry,
+            $this->getPromiseAdapter(),
         );
 
-        $promises = [];
-
-        foreach ($querySplitter->splitOperation($operation) as $subQuery) {
-            $subSchema = $this->subSchemaRegistry->getSubSchema($subQuery->subSchemaName);
-            $promises[] = $subSchema
-                ->delegator
-                ->delegate(
-                    $executionSchema,
-                    $subQuery->operation,
-                    $subQuery->fragments,
-                    $subQuery->variables
-                )
-                ->then(fn(ExecutionResult $result) => $this->delegateSubQueries($result, $subQuery));
-        }
-
-        return $this
-            ->getPromiseAdapter()
-            ->all($promises)
-            ->then($this->mergeResults(...));
+        return $resolver->resolve($operation);
     }
 
     public function getPromiseAdapter(): PromiseAdapter
@@ -61,37 +47,5 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             return $subSchema->delegator->getPromiseAdapter();
         }
-    }
-
-    /**
-     * @param ExecutionResult[] $results
-     */
-    private function mergeResults(iterable $results): ExecutionResult
-    {
-        $data = [];
-        $errors = [];
-        $extensions = [];
-
-        foreach ($results as $result) {
-            if (null !== $result->data) {
-                $data = array_merge($data, $result->data);
-            }
-
-            if (null !== $result->extensions) {
-                $extensions = array_merge($extensions, $result->extensions);
-            }
-
-            $errors = array_merge($errors, $result->errors);
-        }
-
-        return new ExecutionResult(
-            [] !== $data ? $data : null,
-            $errors,
-            [] !== $extensions ? $extensions : null,
-        );
-    }
-
-    private function delegateSubQueries(ExecutionResult $result, SubQuery $query)
-    {
     }
 }
