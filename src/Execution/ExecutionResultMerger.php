@@ -16,15 +16,10 @@ final readonly class ExecutionResultMerger
         $extensions = [];
 
         foreach ($results as $result) {
-            if (null !== $result->data) {
-                $data = array_merge($data, $result->data);
-            }
+            /** @var ExecutionResult $result */
 
-            if (null !== $result->extensions) {
-                $extensions = array_merge($extensions, $result->extensions);
-            }
-
-
+            $data = array_merge($data, $result->data ?? []);
+            $extensions = array_merge($extensions, $result->extensions ?? []);
             $errors = array_merge($errors, $result->errors);
         }
 
@@ -40,7 +35,10 @@ final readonly class ExecutionResultMerger
         foreach ($relationResults as $relationResult) {
             /** @var ExecutionResult $relationResult */
 
-            $result->extensions = array_merge($result->extensions, $relationResult->extensions);
+            $result->extensions = array_merge(
+                $result->extensions ?? [],
+                $relationResult->extensions ?? []
+            );
 
             foreach ($relationResult->errors as $error) {
                 $result->errors[] = new Error(
