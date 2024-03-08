@@ -258,16 +258,12 @@ final readonly class QueryResolver
     ): array {
         $relations = [];
 
-        if ($parentType instanceof NonNull) {
+        while ($parentType instanceof WrappingType) {
+            if ($parentType instanceof ListOfType) {
+                $path .= '[]';
+            }
+
             $parentType = $parentType->getWrappedType();
-        }
-
-        if ($parentType instanceof ListOfType) {
-            $path .= '[]';
-        }
-
-        if ($parentType instanceof WrappingType) {
-            $parentType = $parentType->getInnermostType();
         }
 
         foreach ($selectionSet->selections as $pos => $selection) {
@@ -422,11 +418,15 @@ final readonly class QueryResolver
     ): ?Promise {
         $pos = explode('.', $path, 2);
         $accessPath = $pos[0];
-        $isList = str_ends_with($accessPath, '[]');
+        $isList = false;
+        $listDepth = 0;
 
-        if ($isList) {
+        while (str_ends_with($accessPath, '[]')) {
+            $isList = true;
             $accessPath = substr($accessPath, 0, -2);
+            $listDepth++;
         }
+
 
         $originalData = $accessedData[$accessPath];
         $data = &$accessedData[$accessPath];
@@ -447,19 +447,14 @@ final readonly class QueryResolver
                 );
             }
 
-            $promises = [];
-
-            foreach ($data as &$value) {
-                $promises[] = $this->delegateRelationQueries(
-                    $subSchemaName,
-                    $relationOperation,
-                    $value,
-                    $pos[1],
-                    $relationFields,
-                );
-            }
-
-            return $this->promiseAdapter->all($promises);
+            return $this->delegateListRelationQueries(
+                $subSchemaName,
+                $relationOperation,
+                $data,
+                $pos[1],
+                $relationFields,
+                $listDepth,
+            );
         }
 
         $relationOperation = $relationOperation->cloneDeep();
@@ -532,6 +527,46 @@ final readonly class QueryResolver
                     return $subResult;
                 }
             );
+    }
+
+    /**
+     * @throws \JsonException
+     * @throws Error
+     */
+    private function delegateListRelationQueries(
+        string $subSchemaName,
+        OperationDefinitionNode $relationOperation,
+        array &$accessedData,
+        string $path,
+        array $relationFields,
+        int $depth,
+    ): Promise {
+        $promises = [];
+
+        foreach ($accessedData as &$value) {
+            if ($depth > 0) {
+                $promises[] = $this->delegateListRelationQueries(
+                    $subSchemaName,
+                    $relationOperation,
+                    $value,
+                    $path,
+                    $relationFields,
+                    --$depth,
+                );
+
+                continue;
+            }
+
+            $promises[] = $this->delegateRelationQueries(
+                $subSchemaName,
+                $relationOperation,
+                $value,
+                $path,
+                $relationFields
+            );
+        }
+
+        return $this->promiseAdapter->all($promises);
     }
 
     private function addRelationSelections(
