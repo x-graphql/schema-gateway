@@ -6,7 +6,6 @@ namespace XGraphQL\SchemaGateway\Execution;
 
 use GraphQL\Error\Error;
 use GraphQL\Executor\ExecutionResult;
-use XGraphQL\SchemaGateway\Exception\InvalidArgumentException;
 
 final readonly class ExecutionResultMerger
 {
@@ -14,14 +13,14 @@ final readonly class ExecutionResultMerger
      * @param ExecutionResult[] $results
      * @return ExecutionResult
      */
-    public static function mergeSubResults(array $results): ExecutionResult
+    public static function merge(array $results): ExecutionResult
     {
         $data = [];
         $errors = [];
         $extensions = [];
 
         foreach ($results as $result) {
-            $data = array_merge($data, $result->data ?? []);
+            $data += $result->data ?? [];
             $extensions = array_merge($extensions, $result->extensions ?? []);
             $errors = array_merge($errors, $result->errors);
         }
@@ -38,22 +37,9 @@ final readonly class ExecutionResultMerger
      * @param ExecutionResult[][]|ExecutionResult[] $relationResults
      * @return ExecutionResult
      */
-    public static function mergeRelationResults(ExecutionResult $result, array $relationResults): ExecutionResult
+    public static function mergeWithRelationResults(ExecutionResult $result, array $relationResults): ExecutionResult
     {
         foreach ($relationResults as $relationResult) {
-            /// list of relations
-            if (is_array($relationResult)) {
-                self::mergeRelationResults($result, $relationResult);
-
-                continue;
-            }
-
-            if (!$relationResult instanceof ExecutionResult) {
-                throw new InvalidArgumentException(
-                    sprintf('Elements of `$relationResults` should be instance of: `%s`', ExecutionResult::class)
-                );
-            }
-
             $result->extensions = array_merge(
                 $result->extensions ?? [],
                 $relationResult->extensions ?? []
@@ -63,12 +49,14 @@ final readonly class ExecutionResultMerger
                 $result->errors[] = new Error(
                     $error->getMessage(),
                     previous: $error,
-                    extensions: [
-                        ...($error->getExtensions() ?? []),
+                    extensions: array_merge([
                         [
-                            'x_graphql' => 'relation_error'
-                        ]
-                    ]
+                            'x_graphql' => [
+                                'code' => 'relation_error'
+                            ]
+                        ],
+                        $error->getExtensions() ?? [],
+                    ]),
                 );
             }
         }

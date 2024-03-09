@@ -110,7 +110,7 @@ final readonly class QueryResolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                fn (array $subResults) => ExecutionResultMerger::mergeSubResults($subResults)
+                fn (array $subResults) => ExecutionResultMerger::merge($subResults)
             );
     }
 
@@ -400,7 +400,10 @@ final readonly class QueryResolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                fn (array $relationResults) => ExecutionResultMerger::mergeRelationResults($result, $relationResults)
+                fn (array $relationResults) => array_filter($relationResults)
+            )
+            ->then(
+                fn (array $relationResults) => ExecutionResultMerger::mergeWithRelationResults($result, $relationResults)
             );
     }
 
@@ -541,7 +544,15 @@ final readonly class QueryResolver
                 );
             }
 
-            return $this->promiseAdapter->all($promises);
+            return $this
+                ->promiseAdapter
+                ->all($promises)
+                ->then(
+                    fn (array $results) => array_filter($results)
+                )
+                ->then(
+                    fn (array $results) => ExecutionResultMerger::merge($results)
+                );
         }
 
         return $this->delegateRelationQueries(
