@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace XGraphQL\SchemaGateway\Execution;
 
+use GraphQL\Error\Error;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Language\AST\OperationDefinitionNode;
@@ -22,6 +23,7 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
 
     /**
      * @throws \JsonException
+     * @throws Error
      */
     public function delegate(
         Schema $executionSchema,
@@ -29,23 +31,31 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $resolver = new QueryResolver(
+        $resolver = new Resolver(
             $executionSchema,
             $fragments,
             $variables,
-            $operation->variableDefinitions,
+            $operation,
             $this->relationRegistry,
             $this->subSchemaRegistry,
             $this->getPromiseAdapter(),
         );
 
-        return $resolver->resolve($operation);
+        return $resolver->resolve();
     }
 
     public function getPromiseAdapter(): PromiseAdapter
     {
+        static $adapter = null;
+
+        if (null !== $adapter) {
+            return $adapter;
+        }
+
         foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
-            return $subSchema->delegator->getPromiseAdapter();
+            /// Expect all sub schema should have same promise adapter
+            /// so just use adapter of first element
+            return $adapter = $subSchema->delegator->getPromiseAdapter();
         }
     }
 }
