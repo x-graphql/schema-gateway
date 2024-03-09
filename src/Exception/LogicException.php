@@ -6,5 +6,4 @@ namespace XGraphQL\SchemaGateway\Exception;
 
 class LogicException extends \LogicException implements ExceptionInterface
 {
-
 }

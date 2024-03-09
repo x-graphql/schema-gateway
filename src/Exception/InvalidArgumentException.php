@@ -6,5 +6,4 @@ namespace XGraphQL\SchemaGateway\Exception;
 
 class InvalidArgumentException extends \InvalidArgumentException implements \Throwable
 {
-
 }

@@ -87,7 +87,7 @@ final readonly class ASTBuilder
         }
 
         $printer = (new \ReflectionMethod(SchemaPrinter::class, 'printDirective'))->getClosure();
-        $definitions = array_map(fn(Directive $directive) => $printer($directive, []), $directives);
+        $definitions = array_map(fn (Directive $directive) => $printer($directive, []), $directives);
 
         return implode(PHP_EOL, $definitions);
     }
