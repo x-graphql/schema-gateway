@@ -6,5 +6,4 @@ namespace XGraphQL\SchemaGateway\Exception;
 
 interface ExceptionInterface extends \Throwable
 {
-
 }
