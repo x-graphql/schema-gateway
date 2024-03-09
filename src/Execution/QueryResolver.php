@@ -62,7 +62,7 @@ final readonly class QueryResolver
     public function resolve(OperationDefinitionNode $operation): Promise
     {
         $promises = [];
-        $subSchemaOperationSelections = $this->splitSelections($operation, $operation->selectionSet);
+        $subSchemaOperationSelections = $this->splitSelections($operation);
 
         foreach ($subSchemaOperationSelections as $subSchemaName => $subOperations) {
             foreach ($subOperations as $kind => $selections) {
@@ -447,7 +447,7 @@ final readonly class QueryResolver
                 );
             }
 
-            return $this->delegateListRelationQueries(
+            return $this->delegateRelationQueriesList(
                 $subSchemaName,
                 $relationOperation,
                 $data,
@@ -461,14 +461,12 @@ final readonly class QueryResolver
         $variables = [];
 
         if ($isList) {
-            foreach ($data as $index => &$value) {
-                $variables += $this->addRelationSelections(
-                    $relationOperation,
-                    $value,
-                    $relationFields,
-                    sprintf('_%s', $index),
-                );
-            }
+            $variables += $this->addRelationSelectionsToList(
+                $relationOperation,
+                $data,
+                $relationFields,
+                $listDepth
+            );
         } else {
             $variables += $this->addRelationSelections(
                 $relationOperation,
@@ -481,10 +479,9 @@ final readonly class QueryResolver
         $fragments = $this->collectFragments($relationOperation->selectionSet);
         $subRelations = $this->collectRelations($relationOperationType, $relationOperation->selectionSet, $fragments);
         $variables += $this->collectVariables($relationOperation, $fragments);
+        $variableDefinitions = $this->createVariableDefinitions($variables)->merge($relationOperation->variableDefinitions);
 
-        $relationOperation->variableDefinitions = $this->createVariableDefinitions($variables)->merge(
-            $relationOperation->variableDefinitions
-        );
+        $relationOperation->variableDefinitions = $variableDefinitions;
 
         return $this
             ->delegateQuery($subSchemaName, $relationOperation, $fragments, $variables)
@@ -494,7 +491,7 @@ final readonly class QueryResolver
             )
             ->then(
             /// Then merge up resolved data
-                function (ExecutionResult $subResult) use ($isList, $accessPath, $originalData, &$data) {
+                function (ExecutionResult $subResult) use ($isList, $originalData, &$data) {
                     if ([] !== $subResult->errors) {
                         /// Revert data if have any errors
                         $data = $originalData;
@@ -533,7 +530,7 @@ final readonly class QueryResolver
      * @throws \JsonException
      * @throws Error
      */
-    private function delegateListRelationQueries(
+    private function delegateRelationQueriesList(
         string $subSchemaName,
         OperationDefinitionNode $relationOperation,
         array &$accessedData,
@@ -544,8 +541,12 @@ final readonly class QueryResolver
         $promises = [];
 
         foreach ($accessedData as &$value) {
+            if (null === $value) {
+                continue;
+            }
+
             if ($depth > 0) {
-                $promises[] = $this->delegateListRelationQueries(
+                $promises[] = $this->delegateRelationQueriesList(
                     $subSchemaName,
                     $relationOperation,
                     $value,
@@ -569,11 +570,35 @@ final readonly class QueryResolver
         return $this->promiseAdapter->all($promises);
     }
 
+    private function addRelationSelectionsToList(
+        OperationDefinitionNode $subOperation,
+        array &$listObjectValue,
+        array $relationFields,
+        int $depth
+    ): array {
+        $variables = [];
+
+        foreach ($listObjectValue as &$value) {
+            if (null === $value) {
+                continue;
+            }
+
+            if ($depth > 0) {
+                $variables += $this->addRelationSelectionsToList($subOperation, $value, $relationFields, --$depth);
+
+                continue;
+            }
+
+            $variables += $this->addRelationSelections($subOperation, $value, $relationFields);
+        }
+
+        return $variables;
+    }
+
     private function addRelationSelections(
         OperationDefinitionNode $subOperation,
         array &$objectValue,
         array $relationFields,
-        string $prefix = null
     ): array {
         $variables = [];
         $uid = $this->getUid();
@@ -590,7 +615,7 @@ final readonly class QueryResolver
             $selection = $field->cloneDeep();
 
             $aliasOrName = $selection->alias?->value ?? $selection->name->value;
-            $alias = sprintf('%s%s', $prefix, $aliasOrName);
+            $alias = $this->getUid($uid);
             $selection->alias = Parser::name($alias, ['noLocation' => true]);
             $selection->name = Parser::name($relation->operationField, ['noLocation' => true]);
             $selection->arguments = new NodeList([]);
