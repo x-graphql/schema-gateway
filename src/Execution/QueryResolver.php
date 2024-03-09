@@ -21,14 +21,13 @@ use GraphQL\Language\AST\VariableDefinitionNode;
 use GraphQL\Language\Parser;
 use GraphQL\Type\Definition\HasFieldsType;
 use GraphQL\Type\Definition\ListOfType;
-use GraphQL\Type\Definition\NonNull;
 use GraphQL\Type\Definition\Type;
 use GraphQL\Type\Definition\WrappingType;
 use GraphQL\Type\Introspection;
 use GraphQL\Type\Schema;
 use XGraphQL\SchemaGateway\AST\DelegateDirective;
-use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\MandatorySelectionSetProviderInterface;
+use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 use XGraphQL\Utils\Variable;
@@ -70,7 +69,7 @@ final readonly class QueryResolver
                 $subOperationType = $this->executionSchema->getOperationType($subOperation->operation);
                 $subOperation->selectionSet->selections = new NodeList(
                     array_map(
-                        fn(Node $node) => $node->cloneDeep(),
+                        fn (Node $node) => $node->cloneDeep(),
                         array_values(array_unique($selections)),
                     )
                 );
@@ -78,7 +77,7 @@ final readonly class QueryResolver
                 $this->removeDifferenceSubSchemaFields($subOperation, $subSchemaName);
 
                 $fragments = array_map(
-                    fn(Node $node) => $node->cloneDeep(),
+                    fn (Node $node) => $node->cloneDeep(),
                     array_unique($this->collectFragments($subOperation->selectionSet))
                 );
 
@@ -102,7 +101,7 @@ final readonly class QueryResolver
                         $fragments,
                         $variables
                     )->then(
-                        fn(ExecutionResult $result) => $this->resolveRelations($subOperation, $result, $relations)
+                        fn (ExecutionResult $result) => $this->resolveRelations($subOperation, $result, $relations)
                     );
             }
         }
@@ -110,7 +109,9 @@ final readonly class QueryResolver
         return $this
             ->promiseAdapter
             ->all($promises)
-            ->then(ExecutionResultMerger::mergeSubResults(...));
+            ->then(
+                fn (array $subResults) => ExecutionResultMerger::mergeSubResults($subResults)
+            );
     }
 
     /**
@@ -397,9 +398,9 @@ final readonly class QueryResolver
 
         return $this
             ->promiseAdapter
-            ->all(array_filter($promises))
+            ->all($promises)
             ->then(
-                fn(array $relationResults) => ExecutionResultMerger::mergeRelationResults($result, $relationResults)
+                fn (array $relationResults) => ExecutionResultMerger::mergeRelationResults($result, $relationResults)
             );
     }
 
@@ -486,42 +487,26 @@ final readonly class QueryResolver
         return $this
             ->delegateQuery($subSchemaName, $relationOperation, $fragments, $variables)
             ->then(
-            /// Recursive to resolve all relations first
-                fn(ExecutionResult $subResult) => $this->resolveRelations($relationOperation, $subResult, $subRelations)
+                /// Recursive to resolve all relations first
+                fn (ExecutionResult $relationResult) => $this->resolveRelations($relationOperation, $relationResult, $subRelations)
             )
             ->then(
-            /// Then merge up resolved data
-                function (ExecutionResult $subResult) use ($isList, $originalData, &$data) {
-                    if ([] !== $subResult->errors) {
+                /// Then merge up resolved data
+                function (ExecutionResult $relationResult) use ($isList, $listDepth, $originalData, &$data) {
+                    if ([] !== $relationResult->errors) {
                         /// Revert data if have any errors
                         $data = $originalData;
 
-                        return $subResult;
+                        return $relationResult;
                     }
 
-                    foreach ($subResult->data as $field => $value) {
-                        if (!$isList) {
-                            if (!array_key_exists($field, $data)) {
-                                continue;
-                            }
-
-                            $alias = $data[$field];
-                            $data[$alias] = $value;
-
-                            continue;
-                        }
-
-                        foreach ($data as &$item) {
-                            if (!array_key_exists($field, $item)) {
-                                continue;
-                            }
-
-                            $alias = $item[$field];
-                            $item[$alias] = $value;
-                        }
+                    if (!$isList) {
+                        $this->mergeUpRelationsResult($relationResult, $data);
+                    } else {
+                        $this->mergeUpRelationsResultToList($relationResult, $data, $listDepth);
                     }
 
-                    return $subResult;
+                    return $relationResult;
                 }
             );
     }
@@ -538,14 +523,14 @@ final readonly class QueryResolver
         array $relationFields,
         int $depth,
     ): Promise {
-        $promises = [];
+        if ($depth > 0) {
+            $promises = [];
 
-        foreach ($accessedData as &$value) {
-            if (null === $value) {
-                continue;
-            }
+            foreach ($accessedData as &$value) {
+                if (null === $value) {
+                    continue;
+                }
 
-            if ($depth > 0) {
                 $promises[] = $this->delegateRelationQueriesList(
                     $subSchemaName,
                     $relationOperation,
@@ -554,20 +539,18 @@ final readonly class QueryResolver
                     $relationFields,
                     --$depth,
                 );
-
-                continue;
             }
 
-            $promises[] = $this->delegateRelationQueries(
-                $subSchemaName,
-                $relationOperation,
-                $value,
-                $path,
-                $relationFields
-            );
+            return $this->promiseAdapter->all($promises);
         }
 
-        return $this->promiseAdapter->all($promises);
+        return $this->delegateRelationQueries(
+            $subSchemaName,
+            $relationOperation,
+            $accessedData,
+            $path,
+            $relationFields
+        );
     }
 
     private function addRelationSelectionsToList(
@@ -576,23 +559,21 @@ final readonly class QueryResolver
         array $relationFields,
         int $depth
     ): array {
-        $variables = [];
+        if ($depth > 0) {
+            $variables = [];
 
-        foreach ($listObjectValue as &$value) {
-            if (null === $value) {
-                continue;
-            }
+            foreach ($listObjectValue as &$value) {
+                if (null === $value) {
+                    continue;
+                }
 
-            if ($depth > 0) {
                 $variables += $this->addRelationSelectionsToList($subOperation, $value, $relationFields, --$depth);
-
-                continue;
             }
 
-            $variables += $this->addRelationSelections($subOperation, $value, $relationFields);
+            return $variables;
         }
 
-        return $variables;
+        return $this->addRelationSelections($subOperation, $listObjectValue, $relationFields);
     }
 
     private function addRelationSelections(
@@ -646,6 +627,35 @@ final readonly class QueryResolver
         }
 
         return $variables;
+    }
+
+    private function mergeUpRelationsResult(ExecutionResult $result, array &$data): void
+    {
+        foreach ($result->data as $field => $value) {
+            if (!array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $alias = $data[$field];
+            $data[$alias] = $value;
+
+            unset($data[$field]);
+        }
+    }
+
+    private function mergeUpRelationsResultToList(ExecutionResult $result, array &$data, int $depth): void
+    {
+        if ($depth > 0) {
+            foreach ($data as &$value) {
+                if (null === $value) {
+                    continue;
+                }
+
+                $this->mergeUpRelationsResultToList($result, $value, --$depth);
+            }
+        } else {
+            $this->mergeUpRelationsResult($result, $data);
+        }
     }
 
     private function createOperation(OperationDefinitionNode $fromOperation, string $kind): OperationDefinitionNode
