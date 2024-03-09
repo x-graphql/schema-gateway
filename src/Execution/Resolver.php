@@ -32,13 +32,13 @@ use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 use XGraphQL\Utils\Variable;
 
-final readonly class QueryResolver
+final readonly class Resolver
 {
     /**
      * @param Schema $executionSchema
      * @param array<string,FragmentDefinitionNode> $fragments
      * @param array<string,mixed> $variables
-     * @param NodeList<VariableDefinitionNode> $variableDefinitions
+     * @param OperationDefinitionNode $rootOperation
      * @param RelationRegistry $relationRegistry
      * @param SubSchemaRegistry $subSchemaRegistry
      * @param PromiseAdapter $promiseAdapter
@@ -47,7 +47,7 @@ final readonly class QueryResolver
         private Schema $executionSchema,
         private array $fragments,
         private array $variables,
-        private NodeList $variableDefinitions,
+        private OperationDefinitionNode $rootOperation,
         private RelationRegistry $relationRegistry,
         private SubSchemaRegistry $subSchemaRegistry,
         private PromiseAdapter $promiseAdapter,
@@ -55,54 +55,52 @@ final readonly class QueryResolver
     }
 
     /**
-     * @throws \JsonException|Error
+     * @throws Error
+     * @throws \JsonException
      * @throws \Exception
      */
-    public function resolve(OperationDefinitionNode $operation): Promise
+    public function resolve(): Promise
     {
         $promises = [];
-        $subSchemaOperationSelections = $this->splitSelections($operation);
+        $subSchemaOperationSelections = $this->splitSelections();
 
         foreach ($subSchemaOperationSelections as $subSchemaName => $subOperations) {
             foreach ($subOperations as $kind => $selections) {
-                $subOperation = $this->createOperation($operation, $kind);
-                $subOperationType = $this->executionSchema->getOperationType($subOperation->operation);
-                $subOperation->selectionSet->selections = new NodeList(
+                $operation = $this->createOperation($kind);
+                $operationType = $this->executionSchema->getOperationType($kind);
+
+                $operation->selectionSet->selections = new NodeList(
                     array_map(
-                        fn (Node $node) => $node->cloneDeep(),
+                        static fn(Node $node) => $node->cloneDeep(),
                         array_values(array_unique($selections)),
                     )
                 );
 
-                $this->removeDifferenceSubSchemaFields($subOperation, $subSchemaName);
+                $this->removeDifferenceSubSchemaFields($operation, $subSchemaName);
 
                 $fragments = array_map(
-                    fn (Node $node) => $node->cloneDeep(),
-                    array_unique($this->collectFragments($subOperation->selectionSet))
+                    static fn(Node $node) => $node->cloneDeep(),
+                    array_unique($this->collectFragments($operation->selectionSet))
                 );
 
                 foreach ($fragments as $fragment) {
-                    if ($fragment->typeCondition->name->value === $subOperationType->name()) {
-                        $this->removeDifferenceSubSchemaFields($subOperation, $subSchemaName, $fragment->selectionSet);
+                    if ($fragment->typeCondition->name->value === $operationType->name()) {
+                        $this->removeDifferenceSubSchemaFields($operation, $subSchemaName, $fragment->selectionSet);
                     }
                 }
 
-                $relations = $this->collectRelations($subOperationType, $subOperation->selectionSet, $fragments);
+                $relations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
 
                 /// All selection set is clear, let collects using variables
-                $variables = $this->collectVariables($subOperation, $fragments);
+                $variables = $this->collectVariables($operation, $fragments);
 
-                $subOperation->variableDefinitions = $this->createVariableDefinitions($variables);
+                $operation->variableDefinitions = $this->createVariableDefinitions($variables);
 
-                $promises[] = $this
-                    ->delegateQuery(
-                        $subSchemaName,
-                        $subOperation,
-                        $fragments,
-                        $variables
-                    )->then(
-                        fn (ExecutionResult $result) => $this->resolveRelations($subOperation, $result, $relations)
-                    );
+                $promise = $this->delegateQuery($subSchemaName, $operation, $fragments, $variables);
+
+                $promises[] = $promise->then(
+                    fn(ExecutionResult $result) => $this->resolveRelations($result, $relations)
+                );
             }
         }
 
@@ -110,7 +108,7 @@ final readonly class QueryResolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                fn (array $subResults) => ExecutionResultMerger::merge($subResults)
+                static fn(array $results) => ExecutionResultMerger::merge($results)
             );
     }
 
@@ -134,12 +132,11 @@ final readonly class QueryResolver
     }
 
     private function splitSelections(
-        OperationDefinitionNode $operation,
         SelectionSetNode $selectionSet = null,
         InlineFragmentNode|FragmentSpreadNode $rootFragmentSelection = null,
     ): array {
-        $operationType = $this->executionSchema->getOperationType($operation->operation);
-        $selectionSet ??= $operation->selectionSet;
+        $operationType = $this->executionSchema->getOperationType($this->rootOperation->operation);
+        $selectionSet ??= $this->rootOperation->selectionSet;
         $selections = [];
 
         foreach ($selectionSet->selections as $selection) {
@@ -160,7 +157,7 @@ final readonly class QueryResolver
 
                 $selections = array_merge_recursive(
                     $selections,
-                    $this->splitSelections($operation, $subSelectionSet, $rootFragmentSelection),
+                    $this->splitSelections($subSelectionSet, $rootFragmentSelection),
                 );
 
                 continue;
@@ -369,11 +366,8 @@ final readonly class QueryResolver
      * @throws \JsonException
      * @throws Error
      */
-    private function resolveRelations(
-        OperationDefinitionNode $operation,
-        ExecutionResult $result,
-        array $relations
-    ): Promise {
+    private function resolveRelations(ExecutionResult $result, array $relations): Promise
+    {
         if (null === $result->data) {
             return $this->promiseAdapter->createFulfilled($result);
         }
@@ -383,11 +377,9 @@ final readonly class QueryResolver
         foreach ($relations as $subSchemaName => $subOperations) {
             foreach ($subOperations as $kind => $pathRelationFields) {
                 foreach ($pathRelationFields as $path => $relationFields) {
-                    $relationOperation = $this->createOperation($operation, $kind);
-
                     $promises[] = $this->delegateRelationQueries(
                         $subSchemaName,
-                        $relationOperation,
+                        $kind,
                         $result->data,
                         $path,
                         $relationFields,
@@ -400,10 +392,10 @@ final readonly class QueryResolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                fn (array $relationResults) => array_filter($relationResults)
+                static fn(array $relationResults) => array_filter($relationResults)
             )
             ->then(
-                fn (array $relationResults) => ExecutionResultMerger::mergeWithRelationResults($result, $relationResults)
+                static fn(array $relationResults) => ExecutionResultMerger::mergeWithRelationResults($result, $relationResults)
             );
     }
 
@@ -415,7 +407,7 @@ final readonly class QueryResolver
      */
     private function delegateRelationQueries(
         string $subSchemaName,
-        OperationDefinitionNode $relationOperation,
+        string $operation,
         array &$accessedData,
         string $path,
         array $relationFields,
@@ -444,7 +436,7 @@ final readonly class QueryResolver
             if (!$isList) {
                 return $this->delegateRelationQueries(
                     $subSchemaName,
-                    $relationOperation,
+                    $operation,
                     $data,
                     $pos[1],
                     $relationFields,
@@ -453,7 +445,7 @@ final readonly class QueryResolver
 
             return $this->delegateRelationQueriesList(
                 $subSchemaName,
-                $relationOperation,
+                $operation,
                 $data,
                 $pos[1],
                 $relationFields,
@@ -461,55 +453,61 @@ final readonly class QueryResolver
             );
         }
 
-        $relationOperation = $relationOperation->cloneDeep();
+        $operation = $this->createOperation($operation);
         $variables = [];
 
         if ($isList) {
             $variables += $this->addRelationSelectionsToList(
-                $relationOperation,
+                $operation,
                 $data,
                 $relationFields,
                 $listDepth
             );
         } else {
             $variables += $this->addRelationSelections(
-                $relationOperation,
+                $operation,
                 $data,
                 $relationFields
             );
         }
 
-        $relationOperationType = $this->executionSchema->getOperationType($relationOperation->operation);
-        $fragments = $this->collectFragments($relationOperation->selectionSet);
-        $subRelations = $this->collectRelations($relationOperationType, $relationOperation->selectionSet, $fragments);
-        $variables += $this->collectVariables($relationOperation, $fragments);
-        $variableDefinitions = $this->createVariableDefinitions($variables)->merge($relationOperation->variableDefinitions);
+        /// Unlike root operation, all relation selections have the same sub schema,
+        /// we can skip logics remove difference sub schema before delegate
+        $operationType = $this->executionSchema->getOperationType($operation->operation);
+        $fragments = array_map(
+            static fn(Node $node) => $node->cloneDeep(),
+            array_unique($this->collectFragments($operation->selectionSet))
+        );
 
-        $relationOperation->variableDefinitions = $variableDefinitions;
+        $relationsRelations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
+        $variables += $this->collectVariables($operation, $fragments);
+        $variableDefinitions = $this->createVariableDefinitions($variables)->merge($operation->variableDefinitions);
+
+        $operation->variableDefinitions = $variableDefinitions;
 
         return $this
-            ->delegateQuery($subSchemaName, $relationOperation, $fragments, $variables)
+            ->delegateQuery($subSchemaName, $operation, $fragments, $variables)
             ->then(
-                /// Recursive to resolve all relations first
-                fn (ExecutionResult $relationResult) => $this->resolveRelations($relationOperation, $relationResult, $subRelations)
+            /// Recursive to resolve all relations first
+                fn(ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
             )
             ->then(
-                /// Then merge up resolved data
-                function (ExecutionResult $relationResult) use ($isList, $listDepth, $originalData, &$data) {
-                    if ([] !== $relationResult->errors) {
+            /// Then merge up resolved data
+                function (ExecutionResult $result) use ($isList, $listDepth, $originalData, &$data) {
+                    if ([] !== $result->errors) {
                         /// Revert data if have any errors
                         $data = $originalData;
 
-                        return $relationResult;
+                        return $result;
                     }
 
                     if (!$isList) {
-                        $this->mergeUpRelationsResult($relationResult, $data);
+                        $this->mergeUpRelationsResult($result, $data);
                     } else {
-                        $this->mergeUpRelationsResultToList($relationResult, $data, $listDepth);
+                        $this->mergeUpRelationsResultToList($result, $data, $listDepth);
                     }
 
-                    return $relationResult;
+                    return $result;
                 }
             );
     }
@@ -520,7 +518,7 @@ final readonly class QueryResolver
      */
     private function delegateRelationQueriesList(
         string $subSchemaName,
-        OperationDefinitionNode $relationOperation,
+        string $operation,
         array &$accessedData,
         string $path,
         array $relationFields,
@@ -536,7 +534,7 @@ final readonly class QueryResolver
 
                 $promises[] = $this->delegateRelationQueriesList(
                     $subSchemaName,
-                    $relationOperation,
+                    $operation,
                     $value,
                     $path,
                     $relationFields,
@@ -548,16 +546,16 @@ final readonly class QueryResolver
                 ->promiseAdapter
                 ->all($promises)
                 ->then(
-                    fn (array $results) => array_filter($results)
+                    static fn(array $results) => array_filter($results)
                 )
                 ->then(
-                    fn (array $results) => ExecutionResultMerger::merge($results)
+                    static fn(array $results) => ExecutionResultMerger::merge($results)
                 );
         }
 
         return $this->delegateRelationQueries(
             $subSchemaName,
-            $relationOperation,
+            $operation,
             $accessedData,
             $path,
             $relationFields
@@ -565,35 +563,34 @@ final readonly class QueryResolver
     }
 
     private function addRelationSelectionsToList(
-        OperationDefinitionNode $subOperation,
-        array &$listObjectValue,
+        OperationDefinitionNode $operation,
+        array &$objectValueOrList,
         array $relationFields,
         int $depth
     ): array {
         if ($depth > 0) {
             $variables = [];
 
-            foreach ($listObjectValue as &$value) {
+            foreach ($objectValueOrList as &$value) {
                 if (null === $value) {
                     continue;
                 }
 
-                $variables += $this->addRelationSelectionsToList($subOperation, $value, $relationFields, --$depth);
+                $variables += $this->addRelationSelectionsToList($operation, $value, $relationFields, --$depth);
             }
 
             return $variables;
         }
 
-        return $this->addRelationSelections($subOperation, $listObjectValue, $relationFields);
+        return $this->addRelationSelections($operation, $objectValueOrList, $relationFields);
     }
 
     private function addRelationSelections(
-        OperationDefinitionNode $subOperation,
+        OperationDefinitionNode $operation,
         array &$objectValue,
         array $relationFields,
     ): array {
         $variables = [];
-        $uid = $this->getUid();
 
         foreach ($relationFields as $relationField) {
             /**
@@ -607,7 +604,7 @@ final readonly class QueryResolver
             $selection = $field->cloneDeep();
 
             $aliasOrName = $selection->alias?->value ?? $selection->name->value;
-            $alias = $this->getUid($uid);
+            $alias = $this->getUid();
             $selection->alias = Parser::name($alias, ['noLocation' => true]);
             $selection->name = Parser::name($relation->operationField, ['noLocation' => true]);
             $selection->arguments = new NodeList([]);
@@ -618,22 +615,22 @@ final readonly class QueryResolver
                     continue;
                 }
 
-                $varName = $this->getUid($uid);
+                $varName = $this->getUid();
                 $varValue = $arguments[$operationFieldArg->name];
                 $variables[$varName] = $varValue;
                 $selection->arguments[] = Parser::argument(
                     sprintf('%s: $%s', $operationFieldArg->name, $varName),
                     ['noLocation' => true]
                 );
-                $subOperation->variableDefinitions[] = Parser::variableDefinition(
+                $operation->variableDefinitions[] = Parser::variableDefinition(
                     sprintf('$%s: %s', $varName, $operationFieldArg->getType()->toString()),
                     ['noLocation' => true]
                 );
             }
 
-            $subOperation->selectionSet->selections[] = $selection;
+            $operation->selectionSet->selections[] = $selection;
 
-            /// Value will be replaced after sub operation executed
+            /// Value will be replaced after operation executed
             $objectValue[$alias] = $aliasOrName;
         }
 
@@ -669,12 +666,12 @@ final readonly class QueryResolver
         }
     }
 
-    private function createOperation(OperationDefinitionNode $fromOperation, string $kind): OperationDefinitionNode
+    private function createOperation(string $operation): OperationDefinitionNode
     {
         return new OperationDefinitionNode([
-            'name' => Parser::name($this->getUid(), ['noLocation' => true]),
-            'operation' => $kind,
-            'directives' => $fromOperation->directives->cloneDeep(),
+            'name' => Parser::name('x_graphql', ['noLocation' => true]),
+            'operation' => $operation,
+            'directives' => $this->rootOperation->directives->cloneDeep(),
             'selectionSet' => new SelectionSetNode(['selections' => new NodeList([])]),
             'variableDefinitions' => new NodeList([]),
         ]);
@@ -684,7 +681,7 @@ final readonly class QueryResolver
     {
         $definitions = new NodeList([]);
 
-        foreach ($this->variableDefinitions as $definition) {
+        foreach ($this->rootOperation->variableDefinitions as $definition) {
             /** @var VariableDefinitionNode $definition */
             $name = $definition->variable->name->value;
 
@@ -696,13 +693,10 @@ final readonly class QueryResolver
         return $definitions;
     }
 
-    private function getUid(string $parent = null): string
+    private function getUid(): string
     {
-        static $parentOffset = [];
+        static $pos = 0;
 
-        $parent ??= uniqid('_x_graphql_');
-        $offset = $parentOffset[$parent] = ($parentOffset[$parent] ?? 0) + 1;
-
-        return $parent . $offset;
+        return sprintf('_%d_', ++$pos);
     }
 }
