@@ -45,9 +45,9 @@ final readonly class Resolver
      */
     public function __construct(
         private Schema $executionSchema,
+        private OperationDefinitionNode $rootOperation,
         private array $fragments,
         private array $variables,
-        private OperationDefinitionNode $rootOperation,
         private RelationRegistry $relationRegistry,
         private SubSchemaRegistry $subSchemaRegistry,
         private PromiseAdapter $promiseAdapter,
