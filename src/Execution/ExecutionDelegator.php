@@ -33,9 +33,9 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
     ): Promise {
         $resolver = new Resolver(
             $executionSchema,
+            $operation,
             $fragments,
             $variables,
-            $operation,
             $this->relationRegistry,
             $this->subSchemaRegistry,
             $this->getPromiseAdapter(),
