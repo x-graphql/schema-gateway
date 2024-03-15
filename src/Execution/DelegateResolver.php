@@ -585,6 +585,9 @@ final readonly class DelegateResolver
         return $this->addRelationSelections($operation, $objectValueOrList, $relationFields);
     }
 
+    /**
+     * @throws \JsonException
+     */
     private function addRelationSelections(
         OperationDefinitionNode $operation,
         array &$objectValue,
