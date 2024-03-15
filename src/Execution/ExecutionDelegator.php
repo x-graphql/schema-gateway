@@ -13,6 +13,9 @@ use XGraphQL\Delegate\DelegatorInterface;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
+/**
+ * @internal
+ */
 final readonly class ExecutionDelegator implements DelegatorInterface
 {
     public function __construct(

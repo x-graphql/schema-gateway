@@ -10,6 +10,9 @@ use GraphQL\Language\AST\FieldDefinitionNode;
 use GraphQL\Language\AST\StringValueNode;
 use GraphQL\Language\DirectiveLocation;
 
+/**
+ * @internal
+ */
 final readonly class DelegateDirective
 {
     public const NAME = 'delegate';

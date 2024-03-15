@@ -27,6 +27,9 @@ use XGraphQL\SchemaGateway\Relation;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
+/**
+ * @internal
+ */
 final readonly class ASTBuilder
 {
     private const PRINT_OPTIONS = [

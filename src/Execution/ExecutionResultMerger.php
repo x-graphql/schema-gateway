@@ -7,6 +7,9 @@ namespace XGraphQL\SchemaGateway\Execution;
 use GraphQL\Error\Error;
 use GraphQL\Executor\ExecutionResult;
 
+/**
+ * @internal
+ */
 final readonly class ExecutionResultMerger
 {
     /**
@@ -39,6 +42,7 @@ final readonly class ExecutionResultMerger
      */
     public static function mergeWithRelationResults(ExecutionResult $result, array $relationResults): ExecutionResult
     {
+        /// We don't need to merge data because it had been resolved.
         foreach ($relationResults as $relationResult) {
             $result->extensions = array_merge(
                 $result->extensions ?? [],

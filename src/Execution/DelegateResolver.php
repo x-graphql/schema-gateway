@@ -32,6 +32,9 @@ use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 use XGraphQL\Utils\Variable;
 
+/**
+ * @internal
+ */
 final readonly class DelegateResolver
 {
     /**
@@ -562,6 +565,9 @@ final readonly class DelegateResolver
         );
     }
 
+    /**
+     * @throws \JsonException
+     */
     private function addRelationSelectionsToList(
         OperationDefinitionNode $operation,
         array &$objectValueOrList,
