@@ -9,11 +9,11 @@ use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Language\AST\OperationDefinitionNode;
 use GraphQL\Type\Schema;
-use XGraphQL\DelegateExecution\ExecutionDelegatorInterface;
+use XGraphQL\Delegate\DelegatorInterface;
 use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
-final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
+final readonly class ExecutionDelegator implements DelegatorInterface
 {
     public function __construct(
         private SubSchemaRegistry $subSchemaRegistry,
@@ -25,13 +25,13 @@ final readonly class ExecutionDelegator implements ExecutionDelegatorInterface
      * @throws \JsonException
      * @throws Error
      */
-    public function delegate(
+    public function delegateToExecute(
         Schema $executionSchema,
         OperationDefinitionNode $operation,
         array $fragments = [],
         array $variables = []
     ): Promise {
-        $resolver = new Resolver(
+        $resolver = new DelegateResolver(
             $executionSchema,
             $operation,
             $fragments,

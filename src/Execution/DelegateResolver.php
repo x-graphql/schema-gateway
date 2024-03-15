@@ -32,7 +32,7 @@ use XGraphQL\SchemaGateway\RelationRegistry;
 use XGraphQL\SchemaGateway\SubSchemaRegistry;
 use XGraphQL\Utils\Variable;
 
-final readonly class Resolver
+final readonly class DelegateResolver
 {
     /**
      * @param Schema $executionSchema
@@ -71,7 +71,7 @@ final readonly class Resolver
 
                 $operation->selectionSet->selections = new NodeList(
                     array_map(
-                        static fn(Node $node) => $node->cloneDeep(),
+                        static fn (Node $node) => $node->cloneDeep(),
                         array_values(array_unique($selections)),
                     )
                 );
@@ -79,7 +79,7 @@ final readonly class Resolver
                 $this->removeDifferenceSubSchemaFields($operation, $subSchemaName);
 
                 $fragments = array_map(
-                    static fn(Node $node) => $node->cloneDeep(),
+                    static fn (Node $node) => $node->cloneDeep(),
                     array_unique($this->collectFragments($operation->selectionSet))
                 );
 
@@ -96,10 +96,10 @@ final readonly class Resolver
 
                 $operation->variableDefinitions = $this->createVariableDefinitions($variables);
 
-                $promise = $this->delegateQuery($subSchemaName, $operation, $fragments, $variables);
+                $promise = $this->delegateToExecute($subSchemaName, $operation, $fragments, $variables);
 
                 $promises[] = $promise->then(
-                    fn(ExecutionResult $result) => $this->resolveRelations($result, $relations)
+                    fn (ExecutionResult $result) => $this->resolveRelations($result, $relations)
                 );
             }
         }
@@ -108,7 +108,7 @@ final readonly class Resolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                static fn(array $results) => ExecutionResultMerger::merge($results)
+                static fn (array $results) => ExecutionResultMerger::merge($results)
             );
     }
 
@@ -120,7 +120,7 @@ final readonly class Resolver
      * @return Promise
      * @throws \Exception
      */
-    private function delegateQuery(
+    private function delegateToExecute(
         string $subSchemaName,
         OperationDefinitionNode $subOperation,
         array $fragments,
@@ -128,7 +128,7 @@ final readonly class Resolver
     ): Promise {
         $subSchema = $this->subSchemaRegistry->getSubSchema($subSchemaName);
 
-        return $subSchema->delegator->delegate($this->executionSchema, $subOperation, $fragments, $variables);
+        return $subSchema->delegator->delegateToExecute($this->executionSchema, $subOperation, $fragments, $variables);
     }
 
     private function splitSelections(
@@ -392,10 +392,10 @@ final readonly class Resolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                static fn(array $relationResults) => array_filter($relationResults)
+                static fn (array $relationResults) => array_filter($relationResults)
             )
             ->then(
-                static fn(array $relationResults) => ExecutionResultMerger::mergeWithRelationResults($result, $relationResults)
+                static fn (array $relationResults) => ExecutionResultMerger::mergeWithRelationResults($result, $relationResults)
             );
     }
 
@@ -475,7 +475,7 @@ final readonly class Resolver
         /// we can skip logics remove difference sub schema before delegate
         $operationType = $this->executionSchema->getOperationType($operation->operation);
         $fragments = array_map(
-            static fn(Node $node) => $node->cloneDeep(),
+            static fn (Node $node) => $node->cloneDeep(),
             array_unique($this->collectFragments($operation->selectionSet))
         );
 
@@ -486,13 +486,13 @@ final readonly class Resolver
         $operation->variableDefinitions = $variableDefinitions;
 
         return $this
-            ->delegateQuery($subSchemaName, $operation, $fragments, $variables)
+            ->delegateToExecute($subSchemaName, $operation, $fragments, $variables)
             ->then(
-            /// Recursive to resolve all relations first
-                fn(ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
+                /// Recursive to resolve all relations first
+                fn (ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
             )
             ->then(
-            /// Then merge up resolved data
+                /// Then merge up resolved data
                 function (ExecutionResult $result) use ($isList, $listDepth, $originalData, &$data) {
                     if ([] !== $result->errors) {
                         /// Revert data if have any errors
@@ -546,10 +546,10 @@ final readonly class Resolver
                 ->promiseAdapter
                 ->all($promises)
                 ->then(
-                    static fn(array $results) => array_filter($results)
+                    static fn (array $results) => array_filter($results)
                 )
                 ->then(
-                    static fn(array $results) => ExecutionResultMerger::merge($results)
+                    static fn (array $results) => ExecutionResultMerger::merge($results)
                 );
         }
 

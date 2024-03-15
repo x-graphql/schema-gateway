@@ -3,11 +3,12 @@
     "description": "Merging all sub schemas into one and add relationships for them",
     "type": "library",
     "require-dev": {
+        "guzzlehttp/promises": "^2.0",
         "nyholm/psr7": "^1.8",
         "phpunit/phpunit": "^11.0",
         "symfony/http-client": "^7.0",
         "symplify/easy-coding-standard": "^12.1",
-        "x-graphql/http-schema": "^0.4.0"
+        "x-graphql/http-schema": "^0.6.0"
     },
     "license": "MIT",
     "autoload": {
@@ -25,7 +26,7 @@
         "php": ">=8.2",
         "psr/simple-cache": "^2.0 || ^3.0",
         "webonyx/graphql-php": "^15.9",
-        "x-graphql/delegate-execution": "^0.6.0",
+        "x-graphql/delegate-execution": "^0.7.0",
         "x-graphql/utils": ">=0.2.0"
     },
     "config": {
