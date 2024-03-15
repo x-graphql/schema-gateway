@@ -199,7 +199,7 @@ final readonly class ASTBuilder
                     continue;
                 }
 
-                $definition = SchemaPrinter::printType($type);
+                $definition = SchemaPrinter::printType($type, self::PRINT_OPTIONS);
                 $compareWith = $definitions[$name] ?? null;
                 $schemaTypes[$name][] = $subSchema->name;
 
@@ -235,9 +235,9 @@ final readonly class ASTBuilder
             if (null === $onType || null === $operationType) {
                 throw new LogicException(
                     sprintf(
-                        'Type `%s` and operation type `%s` should be exists on schema',
+                        'Type `%s` and operation `%s` should be exists on schema',
                         $relation->onType,
-                        $relation->rootType
+                        $relation->operation->value,
                     )
                 );
             }
