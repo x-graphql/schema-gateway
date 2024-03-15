@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace XGraphQL\SchemaGateway\AST;
 
+use GraphQL\Error\Error;
+use GraphQL\Error\SerializationError;
 use GraphQL\Language\AST\DocumentNode;
 use GraphQL\Language\AST\FieldDefinitionNode;
 use GraphQL\Language\AST\InputValueDefinitionNode;
@@ -13,7 +15,6 @@ use GraphQL\Language\AST\ObjectTypeDefinitionNode;
 use GraphQL\Language\AST\TypeDefinitionNode;
 use GraphQL\Language\Parser;
 use GraphQL\Language\Printer;
-use GraphQL\Type\Definition\Directive;
 use GraphQL\Type\Definition\NamedType;
 use GraphQL\Type\Definition\Type;
 use GraphQL\Utils\SchemaPrinter;
@@ -27,6 +28,14 @@ use XGraphQL\SchemaGateway\SubSchemaRegistry;
 
 final readonly class ASTBuilder
 {
+    private const PRINT_OPTIONS = [
+        'sortArguments' => true,
+        'sortEnumValues' => true,
+        'sortFields' => true,
+        'sortInputFields' => true,
+        'sortTypes' => true,
+    ];
+
     public function __construct(
         private SubSchemaRegistry $subSchemaRegistry,
         private RelationRegistry $relationRegistry
@@ -63,35 +72,39 @@ final readonly class ASTBuilder
 
     private function defineDirectives(): string
     {
-        $directives = $schemaDirectives = [];
+        $printer = (new \ReflectionMethod(SchemaPrinter::class, 'printDirective'))->getClosure();
+        $definitions = $schemaDirectives = [];
 
         foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             foreach ($subSchema->delegator->getSchema()->getDirectives() as $directive) {
                 $name = $directive->name;
-                $compareWith = $directives[$name] ?? null;
+                $definition = $printer($directive, self::PRINT_OPTIONS);
+                $compareWith = $definitions[$name] ?? null;
                 $schemaDirectives[$name][] = $subSchema->name;
 
-                if (null !== $compareWith) {
-                    try {
-                        ConflictGuard::directiveGuard($directive, $compareWith);
-                    } catch (ConflictException $exception) {
-                        $exception->setSchemas($schemaDirectives[$name]);
-                        $exception->setConflictDirectives([$directive, $compareWith]);
-
-                        throw $exception;
-                    }
+                if (null !== $compareWith && $definition !== $compareWith) {
+                    throw new ConflictException(
+                        sprintf(
+                            'Directive conflict: `%s` with `%s`',
+                            $definition,
+                            $compareWith,
+                        ),
+                        $schemaDirectives[$name],
+                    );
                 }
 
-                $directives[$name] = clone $directive;
+                $definitions[$name] = $definition;
             }
         }
-
-        $printer = (new \ReflectionMethod(SchemaPrinter::class, 'printDirective'))->getClosure();
-        $definitions = array_map(fn (Directive $directive) => $printer($directive, []), $directives);
 
         return implode(PHP_EOL, $definitions);
     }
 
+    /**
+     * @throws SerializationError
+     * @throws \JsonException
+     * @throws Error
+     */
     private function defineOperationTypes(): string
     {
         $definitions = [];
@@ -103,6 +116,11 @@ final readonly class ASTBuilder
         return implode(PHP_EOL, $definitions);
     }
 
+    /**
+     * @throws SerializationError
+     * @throws \JsonException
+     * @throws Error
+     */
     private function defineOperationType(string $operation): string
     {
         $schemaFields = [];
@@ -125,16 +143,14 @@ final readonly class ASTBuilder
                 $schemaFields[$fieldName][] = $subSchema->name;
 
                 if (isset($fields[$fieldName])) {
-                    $exception = new ConflictException(
+                    throw new ConflictException(
                         sprintf(
                             'Duplicated field `%s` on %s root type',
                             $fieldName,
                             $operation,
-                        )
+                        ),
+                        $schemaFields[$fieldName]
                     );
-                    $exception->setSchemas($schemaFields[$fieldName]);
-
-                    throw $exception;
                 }
 
                 $fields[$fieldName] = $field;
@@ -161,9 +177,14 @@ final readonly class ASTBuilder
         return Printer::doPrint($definition);
     }
 
+    /**
+     * @throws SerializationError
+     * @throws \JsonException
+     * @throws Error
+     */
     private function defineTypes(): string
     {
-        $types = $schemaTypes = [];
+        $definitions = $schemaTypes = [];
 
         foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             $schema = $subSchema->delegator->getSchema();
@@ -178,25 +199,20 @@ final readonly class ASTBuilder
                     continue;
                 }
 
-                $compareWith = $types[$name] ?? null;
+                $definition = SchemaPrinter::printType($type, self::PRINT_OPTIONS);
+                $compareWith = $definitions[$name] ?? null;
                 $schemaTypes[$name][] = $subSchema->name;
 
-                if (null !== $compareWith) {
-                    try {
-                        ConflictGuard::typeGuard($type, $compareWith);
-                    } catch (ConflictException $exception) {
-                        $exception->setSchemas($schemaTypes[$name]);
-                        $exception->setConflictTypes([$type, $compareWith]);
-
-                        throw $exception;
-                    }
+                if (null !== $compareWith && $definition !== $compareWith) {
+                    throw new ConflictException(
+                        sprintf('Type conflict: `%s` with `%s`', $definition, $compareWith),
+                        $schemaTypes[$name],
+                    );
                 }
 
-                $types[$name] = $type;
+                $definitions[$name] = $definition;
             }
         }
-
-        $definitions = array_map([SchemaPrinter::class, 'printType'], $types);
 
         return implode(PHP_EOL, $definitions);
     }
@@ -219,9 +235,9 @@ final readonly class ASTBuilder
             if (null === $onType || null === $operationType) {
                 throw new LogicException(
                     sprintf(
-                        'Type `%s` and operation type `%s` should be exists on schema',
+                        'Type `%s` and operation `%s` should be exists on schema',
                         $relation->onType,
-                        $relation->rootType
+                        $relation->operation->value,
                     )
                 );
             }
