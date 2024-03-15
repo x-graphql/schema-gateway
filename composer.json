@@ -6,6 +6,7 @@
         "guzzlehttp/promises": "^2.0",
         "nyholm/psr7": "^1.8",
         "phpunit/phpunit": "^11.0",
+        "symfony/cache": "^7.0",
         "symfony/http-client": "^7.0",
         "symplify/easy-coding-standard": "^12.1",
         "x-graphql/http-schema": "^0.6.0"
