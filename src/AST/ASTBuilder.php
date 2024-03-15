@@ -6,6 +6,7 @@ namespace XGraphQL\SchemaGateway\AST;
 
 use GraphQL\Error\Error;
 use GraphQL\Error\SerializationError;
+use GraphQL\Error\SyntaxError;
 use GraphQL\Language\AST\DocumentNode;
 use GraphQL\Language\AST\FieldDefinitionNode;
 use GraphQL\Language\AST\InputValueDefinitionNode;
@@ -42,6 +43,12 @@ final readonly class ASTBuilder
     ) {
     }
 
+    /**
+     * @throws SerializationError
+     * @throws \JsonException
+     * @throws SyntaxError
+     * @throws Error
+     */
     public function build(): DocumentNode
     {
         $sdl = implode(
@@ -219,6 +226,7 @@ final readonly class ASTBuilder
 
     /**
      * @param array<string, TypeDefinitionNode> $types
+     * @throws \JsonException
      */
     private function addTypesRelations(array $types): void
     {
@@ -268,6 +276,9 @@ final readonly class ASTBuilder
         }
     }
 
+    /**
+     * @throws \JsonException
+     */
     private function makeRelationField(ObjectTypeDefinitionNode $operationType, Relation $relation): FieldDefinitionNode
     {
         $relationDef = null;

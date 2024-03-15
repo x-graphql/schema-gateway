@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace XGraphQL\SchemaGateway;
 
 use GraphQL\Error\Error;
+use GraphQL\Error\SerializationError;
 use GraphQL\Type\Schema;
 use GraphQL\Utils\AST;
 use GraphQL\Utils\BuildSchema;
@@ -24,6 +25,7 @@ final class SchemaGatewayFactory
      * @throws \ReflectionException
      * @throws InvalidArgumentException
      * @throws \JsonException
+     * @throws SerializationError
      */
     public static function create(
         iterable $subSchemas,
