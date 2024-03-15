@@ -10,7 +10,7 @@ use GraphQL\Utils\AST;
 use GraphQL\Utils\BuildSchema;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
-use XGraphQL\DelegateExecution\DelegatedErrorsReporterInterface;
+use XGraphQL\DelegateExecution\ErrorsReporterInterface;
 use XGraphQL\DelegateExecution\Execution;
 use XGraphQL\SchemaGateway\AST\ASTBuilder;
 use XGraphQL\SchemaGateway\Execution\ExecutionDelegator;
@@ -29,7 +29,7 @@ final class SchemaGatewayFactory
         iterable $subSchemas,
         iterable $relations = [],
         CacheInterface $cache = null,
-        DelegatedErrorsReporterInterface $errorsReporter = null,
+        ErrorsReporterInterface $errorsReporter = null,
     ): Schema {
         $subSchemasRegistry = new SubSchemaRegistry($subSchemas);
         $relationsRegistry = new RelationRegistry($relations);

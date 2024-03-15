@@ -5,19 +5,19 @@ declare(strict_types=1);
 namespace XGraphQL\SchemaGateway;
 
 use GraphQL\Type\Schema;
-use XGraphQL\DelegateExecution\SchemaExecutionDelegator;
-use XGraphQL\DelegateExecution\SchemaExecutionDelegatorInterface;
+use XGraphQL\Delegate\SchemaDelegator;
+use XGraphQL\Delegate\SchemaDelegatorInterface;
 
 final readonly class SubSchema
 {
-    public SchemaExecutionDelegatorInterface $delegator;
+    public SchemaDelegatorInterface $delegator;
 
-    public function __construct(public string $name, SchemaExecutionDelegatorInterface|Schema $schemaOrDelegator)
+    public function __construct(public string $name, SchemaDelegatorInterface|Schema $schemaOrDelegator)
     {
-        if ($schemaOrDelegator instanceof SchemaExecutionDelegatorInterface) {
+        if ($schemaOrDelegator instanceof SchemaDelegatorInterface) {
             $this->delegator = $schemaOrDelegator;
         } else {
-            $this->delegator = new SchemaExecutionDelegator($schemaOrDelegator);
+            $this->delegator = new SchemaDelegator($schemaOrDelegator);
         }
     }
 }
