@@ -74,7 +74,7 @@ final readonly class DelegateResolver
 
                 $operation->selectionSet->selections = new NodeList(
                     array_map(
-                        static fn (Node $node) => $node->cloneDeep(),
+                        static fn(Node $node) => $node->cloneDeep(),
                         array_values(array_unique($selections)),
                     )
                 );
@@ -82,7 +82,7 @@ final readonly class DelegateResolver
                 $this->removeDifferenceSubSchemaFields($operation, $subSchemaName);
 
                 $fragments = array_map(
-                    static fn (Node $node) => $node->cloneDeep(),
+                    static fn(Node $node) => $node->cloneDeep(),
                     array_unique($this->collectFragments($operation->selectionSet))
                 );
 
@@ -102,7 +102,7 @@ final readonly class DelegateResolver
                 $promise = $this->delegateToExecute($subSchemaName, $operation, $fragments, $variables);
 
                 $promises[] = $promise->then(
-                    fn (ExecutionResult $result) => $this->resolveRelations($result, $relations)
+                    fn(ExecutionResult $result) => $this->resolveRelations($result, $relations)
                 );
             }
         }
@@ -393,10 +393,10 @@ final readonly class DelegateResolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                static fn (array $relationResults) => array_filter($relationResults)
+                static fn(array $relationResults) => array_filter($relationResults)
             )
             ->then(
-                fn (array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults($result, $relationResults)
+                fn(array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults($result, $relationResults)
             );
     }
 
@@ -476,7 +476,7 @@ final readonly class DelegateResolver
         /// we can skip logics remove difference sub schema before delegate
         $operationType = $this->executionSchema->getOperationType($operation->operation);
         $fragments = array_map(
-            static fn (Node $node) => $node->cloneDeep(),
+            static fn(Node $node) => $node->cloneDeep(),
             array_unique($this->collectFragments($operation->selectionSet))
         );
 
@@ -489,11 +489,11 @@ final readonly class DelegateResolver
         return $this
             ->delegateToExecute($subSchemaName, $operation, $fragments, $variables)
             ->then(
-                /// Recursive to resolve all relations first
-                fn (ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
+            /// Recursive to resolve all relations first
+                fn(ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
             )
             ->then(
-                /// Then merge up resolved data
+            /// Then merge up resolved data
                 function (ExecutionResult $result) use ($isList, $listDepth, $originalData, &$data) {
                     if ([] !== $result->errors) {
                         /// Revert data if have any errors
@@ -547,7 +547,7 @@ final readonly class DelegateResolver
                 ->promiseAdapter
                 ->all($promises)
                 ->then(
-                    static fn (array $results) => array_filter($results)
+                    static fn(array $results) => array_filter($results)
                 )
                 ->then($this->mergeExecutionResults(...));
         }
@@ -707,14 +707,14 @@ final readonly class DelegateResolver
                 $result->errors[] = new Error(
                     $error->getMessage(),
                     previous: $error,
-                    extensions: array_merge([
+                    extensions: array_merge(
                         [
                             'x_graphql' => [
                                 'code' => 'relation_error'
                             ]
                         ],
                         $error->getExtensions() ?? [],
-                    ]),
+                    ),
                 );
             }
         }
