@@ -110,9 +110,7 @@ final readonly class DelegateResolver
         return $this
             ->promiseAdapter
             ->all($promises)
-            ->then(
-                static fn (array $results) => ExecutionResultMerger::merge($results)
-            );
+            ->then($this->mergeExecutionResults(...));
     }
 
     /**
@@ -398,7 +396,7 @@ final readonly class DelegateResolver
                 static fn (array $relationResults) => array_filter($relationResults)
             )
             ->then(
-                static fn (array $relationResults) => ExecutionResultMerger::mergeWithRelationResults($result, $relationResults)
+                fn (array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults($result, $relationResults)
             );
     }
 
@@ -551,9 +549,7 @@ final readonly class DelegateResolver
                 ->then(
                     static fn (array $results) => array_filter($results)
                 )
-                ->then(
-                    static fn (array $results) => ExecutionResultMerger::merge($results)
-                );
+                ->then($this->mergeExecutionResults(...));
         }
 
         return $this->delegateRelationQueries(
@@ -675,6 +671,57 @@ final readonly class DelegateResolver
         }
     }
 
+    private function mergeExecutionResults(array $results): ExecutionResult
+    {
+        $data = [];
+        $errors = [];
+        $extensions = [];
+
+        foreach ($results as $result) {
+            $data += $result->data ?? [];
+            $extensions = array_merge($extensions, $result->extensions ?? []);
+            $errors = array_merge($errors, $result->errors);
+        }
+
+        return new ExecutionResult(
+            [] !== $data ? $data : null,
+            $errors,
+            $extensions,
+        );
+    }
+
+    /**
+     * @param ExecutionResult $result
+     * @param ExecutionResult[][]|ExecutionResult[] $relationResults
+     * @return ExecutionResult
+     */
+    private function mergeErrorsAndExtensionFromRelationResults(ExecutionResult $result, array $relationResults): ExecutionResult
+    {
+        foreach ($relationResults as $relationResult) {
+            $result->extensions = array_merge(
+                $result->extensions ?? [],
+                $relationResult->extensions ?? []
+            );
+
+            foreach ($relationResult->errors as $error) {
+                $result->errors[] = new Error(
+                    $error->getMessage(),
+                    previous: $error,
+                    extensions: array_merge([
+                        [
+                            'x_graphql' => [
+                                'code' => 'relation_error'
+                            ]
+                        ],
+                        $error->getExtensions() ?? [],
+                    ]),
+                );
+            }
+        }
+
+        return $result;
+    }
+
     private function createOperation(string $operation): OperationDefinitionNode
     {
         return new OperationDefinitionNode([
@@ -704,8 +751,10 @@ final readonly class DelegateResolver
 
     private function getUid(): string
     {
+        static $uid = null;
         static $pos = 0;
+        $uid ??= uniqid('_');
 
-        return sprintf('_%d_', ++$pos);
+        return sprintf('%s_%d', $uid, ++$pos);
     }
 }

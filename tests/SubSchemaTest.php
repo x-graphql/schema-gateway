@@ -27,5 +27,4 @@ class SubSchemaTest extends TestCase
         $this->assertSame($delegator, $withDelegator->delegator);
         $this->assertSame($schema, $withDelegator->delegator->getSchema());
     }
-
 }
