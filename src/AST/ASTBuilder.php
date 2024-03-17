@@ -87,8 +87,14 @@ final readonly class ASTBuilder
 
         foreach ($this->subSchemaRegistry->subSchemas as $subSchema) {
             foreach ($subSchema->delegator->getSchema()->getDirectives() as $directive) {
-                $name = $directive->name;
+                $locations = $directive->locations;
+
+                natsort($directive->locations);
+
                 $definition = $printer($directive, self::PRINT_OPTIONS);
+                $directive->locations = $locations; // revert locations position after print
+
+                $name = $directive->name;
                 $compareWith = $definitions[$name] ?? null;
                 $schemaDirectives[$name][] = $subSchema->name;
 
