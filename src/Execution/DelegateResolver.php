@@ -13,7 +13,6 @@ use GraphQL\Language\AST\FieldNode;
 use GraphQL\Language\AST\FragmentDefinitionNode;
 use GraphQL\Language\AST\FragmentSpreadNode;
 use GraphQL\Language\AST\InlineFragmentNode;
-use GraphQL\Language\AST\Node;
 use GraphQL\Language\AST\NodeList;
 use GraphQL\Language\AST\OperationDefinitionNode;
 use GraphQL\Language\AST\SelectionSetNode;
@@ -70,28 +69,10 @@ final readonly class DelegateResolver
         foreach ($subSchemaOperationSelections as $subSchemaName => $subOperations) {
             foreach ($subOperations as $kind => $selections) {
                 $operation = $this->createOperation($kind);
+                $operation->selectionSet->selections = new NodeList($selections);
+
                 $operationType = $this->executionSchema->getOperationType($kind);
-
-                $operation->selectionSet->selections = new NodeList(
-                    array_map(
-                        static fn(Node $node) => $node->cloneDeep(),
-                        array_values(array_unique($selections)),
-                    )
-                );
-
-                $this->removeDifferenceSubSchemaFields($operation, $subSchemaName);
-
-                $fragments = array_map(
-                    static fn(Node $node) => $node->cloneDeep(),
-                    array_unique($this->collectFragments($operation->selectionSet))
-                );
-
-                foreach ($fragments as $fragment) {
-                    if ($fragment->typeCondition->name->value === $operationType->name()) {
-                        $this->removeDifferenceSubSchemaFields($operation, $subSchemaName, $fragment->selectionSet);
-                    }
-                }
-
+                $fragments = $this->collectFragments($operationType, $operation->selectionSet);
                 $relations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
 
                 /// All selection set is clear, let collects using variables
@@ -102,7 +83,7 @@ final readonly class DelegateResolver
                 $promise = $this->delegateToExecute($subSchemaName, $operation, $fragments, $variables);
 
                 $promises[] = $promise->then(
-                    fn(ExecutionResult $result) => $this->resolveRelations($result, $relations)
+                    fn (ExecutionResult $result) => $this->resolveRelations($result, $relations)
                 );
             }
         }
@@ -132,13 +113,10 @@ final readonly class DelegateResolver
         return $subSchema->delegator->delegateToExecute($this->executionSchema, $subOperation, $fragments, $variables);
     }
 
-    private function splitSelections(
-        SelectionSetNode $selectionSet = null,
-        InlineFragmentNode|FragmentSpreadNode $rootFragmentSelection = null,
-    ): array {
+    private function splitSelections(SelectionSetNode $selectionSet = null, array &$selections = []): array
+    {
         $operationType = $this->executionSchema->getOperationType($this->rootOperation->operation);
         $selectionSet ??= $this->rootOperation->selectionSet;
-        $selections = [];
 
         foreach ($selectionSet->selections as $selection) {
             /** @var FieldNode|FragmentSpreadNode|InlineFragmentNode $selection */
@@ -146,9 +124,6 @@ final readonly class DelegateResolver
             $subSelectionSet = null;
 
             if ($selection instanceof FragmentSpreadNode || $selection instanceof InlineFragmentNode) {
-                /// Inline fragment and fragment spread on operation type MUST have equals type condition
-                $rootFragmentSelection ??= $selection;
-
                 if ($selection instanceof FragmentSpreadNode) {
                     $fragment = $this->fragments[$selection->name->value];
                     $subSelectionSet = $fragment->selectionSet;
@@ -156,10 +131,7 @@ final readonly class DelegateResolver
                     $subSelectionSet = $selection->selectionSet;
                 }
 
-                $selections = array_merge_recursive(
-                    $selections,
-                    $this->splitSelections($subSelectionSet, $rootFragmentSelection),
-                );
+                $this->splitSelections($subSelectionSet, $selections);
 
                 continue;
             }
@@ -173,72 +145,71 @@ final readonly class DelegateResolver
                 $operation = $delegateDirective->operation;
                 $selections[$subSchema][$operation] ??= [];
 
-                if (null === $rootFragmentSelection) {
-                    $selections[$subSchema][$operation][] = $selection;
-                } else {
-                    $selections[$subSchema][$operation][] = $rootFragmentSelection;
-                }
+                /// Use inline fragment for resolving multi field nodes.
+                $selections[$subSchema][$operation][] = new InlineFragmentNode(
+                    [
+                        'typeCondition' => Parser::namedType($operationType->name()),
+                        'selectionSet' => new SelectionSetNode([
+                            'selections' => new NodeList([$selection->cloneDeep()])
+                        ])
+                    ]
+                );
             }
         }
 
         return $selections;
     }
 
-    private function collectFragments(SelectionSetNode $selectionSet): array
+    private function collectFragments(Type $parentType, SelectionSetNode $selectionSet): array
     {
+        if ($parentType instanceof WrappingType) {
+            $parentType = $parentType->getInnermostType();
+        }
+
         /** @var array<string, FragmentDefinitionNode> $fragments */
         $fragments = [];
 
         foreach ($selectionSet->selections as $selection) {
-            $subSelectionSet = null;
+            $type = $subSelectionSet = null;
 
             if ($selection instanceof FragmentSpreadNode) {
                 $name = $selection->name->value;
-                $fragment = $fragments[$name] = $this->fragments[$name];
+                $fragment = $fragments[$name] = $this->fragments[$name]->cloneDeep();
+                $typename = $fragment->typeCondition->name->value;
+                $type = $this->executionSchema->getType($typename);
                 $subSelectionSet = $fragment->selectionSet;
             }
 
             if ($selection instanceof InlineFragmentNode) {
+                $typename = $selection->typeCondition->name->value;
+                $type = $this->executionSchema->getType($typename);
                 $subSelectionSet = $selection->selectionSet;
             }
 
-            if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
+            if ($selection instanceof FieldNode) {
+                assert($parentType instanceof HasFieldsType);
+
+                $fieldName = $selection->name->value;
+
+                if (Introspection::TYPE_NAME_FIELD_NAME === $fieldName) {
+                    continue;
+                }
+
+                if ($this->relationRegistry->hasRelation($parentType->name, $fieldName)) {
+                    /// Relation fields will be removed, so collect fragments may cause type unknown or fragment unused errors.
+                    continue;
+                }
+
+                $type = $parentType->getField($fieldName)->getType();
                 $subSelectionSet = $selection->selectionSet;
             }
 
-            if (null !== $subSelectionSet) {
-                $fragments += $this->collectFragments($subSelectionSet);
+            if (null !== $type && null !== $subSelectionSet) {
+                $fragments += $this->collectFragments($type, $subSelectionSet);
             }
         }
 
         return $fragments;
-    }
-
-    private function removeDifferenceSubSchemaFields(
-        OperationDefinitionNode $subOperation,
-        string $subSchemaName,
-        SelectionSetNode $selectionSet = null,
-    ): void {
-        $subOperationType = $this->executionSchema->getOperationType($subOperation->operation);
-        $selectionSet ??= $subOperation->selectionSet;
-
-        foreach ($selectionSet->selections as $index => $selection) {
-            if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
-                $fieldName = $selection->name->value;
-                $field = $subOperationType->getField($fieldName);
-                $delegateDirective = DelegateDirective::find($field->astNode);
-
-                if ($subSchemaName !== $delegateDirective->subSchema) {
-                    unset($selectionSet->selections[$index]);
-                }
-            }
-
-            if ($selection instanceof InlineFragmentNode) {
-                $this->removeDifferenceSubSchemaFields($subOperation, $subSchemaName, $selection->selectionSet);
-            }
-        }
-
-        $selectionSet->selections->reindex();
     }
 
     /**
@@ -393,10 +364,10 @@ final readonly class DelegateResolver
             ->promiseAdapter
             ->all($promises)
             ->then(
-                static fn(array $relationResults) => array_filter($relationResults)
+                static fn (array $relationResults) => array_filter($relationResults)
             )
             ->then(
-                fn(array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults($result, $relationResults)
+                fn (array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults($result, $relationResults)
             );
     }
 
@@ -472,14 +443,8 @@ final readonly class DelegateResolver
             );
         }
 
-        /// Unlike root operation, all relation selections have the same sub schema,
-        /// we can skip logics remove difference sub schema before delegate
         $operationType = $this->executionSchema->getOperationType($operation->operation);
-        $fragments = array_map(
-            static fn(Node $node) => $node->cloneDeep(),
-            array_unique($this->collectFragments($operation->selectionSet))
-        );
-
+        $fragments = $this->collectFragments($operationType, $operation->selectionSet);
         $relationsRelations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
         $variables += $this->collectVariables($operation, $fragments);
         $variableDefinitions = $this->createVariableDefinitions($variables)->merge($operation->variableDefinitions);
@@ -489,11 +454,11 @@ final readonly class DelegateResolver
         return $this
             ->delegateToExecute($subSchemaName, $operation, $fragments, $variables)
             ->then(
-            /// Recursive to resolve all relations first
-                fn(ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
+                /// Recursive to resolve all relations first
+                fn (ExecutionResult $result) => $this->resolveRelations($result, $relationsRelations)
             )
             ->then(
-            /// Then merge up resolved data
+                /// Then merge up resolved data
                 function (ExecutionResult $result) use ($isList, $listDepth, $originalData, &$data) {
                     if ([] !== $result->errors) {
                         /// Revert data if have any errors
@@ -547,7 +512,7 @@ final readonly class DelegateResolver
                 ->promiseAdapter
                 ->all($promises)
                 ->then(
-                    static fn(array $results) => array_filter($results)
+                    static fn (array $results) => array_filter($results)
                 )
                 ->then($this->mergeExecutionResults(...));
         }
