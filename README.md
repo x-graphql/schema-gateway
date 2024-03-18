@@ -117,6 +117,12 @@ var_dump(SchemaPrinter::doPrint($schemaGateway));
 var_dump(GraphQL::executeQuery($schemaGateway, $query)->toArray());
 ``` 
 
+
+**Rules when merging sub schemas:**
+
++ Top-level field names need to be unique across all merged schemas (case-sensitive match).
++ Types with the exact same name and structure will be merged. But types with the same name but different structure will result in type conflicts.
+
 Inspiration
 -----------
 
