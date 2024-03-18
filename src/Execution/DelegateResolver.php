@@ -401,7 +401,6 @@ final readonly class DelegateResolver
             $listDepth++;
         }
 
-
         $originalData = $accessedData[$accessPath];
         $data = &$accessedData[$accessPath];
 
@@ -510,7 +509,7 @@ final readonly class DelegateResolver
                     $value,
                     $path,
                     $relationFields,
-                    --$depth,
+                    $depth - 1,
                 );
             }
 
@@ -522,6 +521,7 @@ final readonly class DelegateResolver
                 )
                 ->then($this->mergeExecutionResults(...));
         }
+
 
         return $this->delegateRelationQueries(
             $subSchemaName,
@@ -539,7 +539,7 @@ final readonly class DelegateResolver
         OperationDefinitionNode $operation,
         array &$objectValueOrList,
         array $relationFields,
-        int $depth
+        int $depth,
     ): array {
         if ($depth > 0) {
             $variables = [];
@@ -549,7 +549,12 @@ final readonly class DelegateResolver
                     continue;
                 }
 
-                $variables += $this->addRelationSelectionsToList($operation, $value, $relationFields, --$depth);
+                $variables += $this->addRelationSelectionsToList(
+                    $operation,
+                    $value,
+                    $relationFields,
+                    $depth - 1,
+                );
             }
 
             return $variables;
@@ -575,7 +580,7 @@ final readonly class DelegateResolver
             $objectValue[$alias] = $fieldAlias;
 
             /**
-             * @var array<string, mixed> $args
+             * @var array<string, mixed> $currentArgs
              * @var Relation $relation
              */
             [, $currentArgs, $relation] = $infos[0]; /// All field selection MUST be the same args and relation.
@@ -658,7 +663,7 @@ final readonly class DelegateResolver
                     continue;
                 }
 
-                $this->mergeUpRelationsResultToList($result, $value, --$depth);
+                $this->mergeUpRelationsResultToList($result, $value, $depth - 1);
             }
         } else {
             $this->mergeUpRelationsResult($result, $data);
