@@ -64,28 +64,25 @@ final readonly class DelegateResolver
     public function resolve(): Promise
     {
         $promises = [];
-        $subSchemaOperationSelections = $this->splitSelections();
 
-        foreach ($subSchemaOperationSelections as $subSchemaName => $subOperations) {
-            foreach ($subOperations as $kind => $selections) {
-                $operation = $this->createOperation($kind);
-                $operation->selectionSet->selections = new NodeList($selections);
+        foreach ($this->splitSelections() as $subSchemaName => $selections) {
+            $operation = $this->createOperation($this->rootOperation->operation);
+            $operation->selectionSet->selections = new NodeList($selections);
 
-                $operationType = $this->executionSchema->getOperationType($kind);
-                $fragments = $this->collectFragments($operationType, $operation->selectionSet);
-                $relations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
+            $operationType = $this->executionSchema->getOperationType($operation->operation);
+            $fragments = $this->collectFragments($operationType, $operation->selectionSet);
+            $relations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
 
-                /// All selection set is clear, let collects using variables
-                $variables = $this->collectVariables($operation, $fragments);
+            /// All selection set is clear, let collects using variables
+            $variables = $this->collectVariables($operation, $fragments);
 
-                $operation->variableDefinitions = $this->createVariableDefinitions($variables);
+            $operation->variableDefinitions = $this->createVariableDefinitions($variables);
 
-                $promise = $this->delegateToExecute($subSchemaName, $operation, $fragments, $variables);
+            $promise = $this->delegateToExecute($subSchemaName, $operation, $fragments, $variables);
 
-                $promises[] = $promise->then(
-                    fn (ExecutionResult $result) => $this->resolveRelations($result, $relations)
-                );
-            }
+            $promises[] = $promise->then(
+                fn (ExecutionResult $result) => $this->resolveRelations($result, $relations)
+            );
         }
 
         return $this
@@ -113,10 +110,11 @@ final readonly class DelegateResolver
         return $subSchema->delegator->delegateToExecute($this->executionSchema, $subOperation, $fragments, $variables);
     }
 
-    private function splitSelections(SelectionSetNode $selectionSet = null, array &$selections = []): array
+    private function splitSelections(SelectionSetNode $selectionSet = null): array
     {
         $operationType = $this->executionSchema->getOperationType($this->rootOperation->operation);
         $selectionSet ??= $this->rootOperation->selectionSet;
+        $selections = [];
 
         foreach ($selectionSet->selections as $selection) {
             /** @var FieldNode|FragmentSpreadNode|InlineFragmentNode $selection */
@@ -131,9 +129,14 @@ final readonly class DelegateResolver
                     $subSelectionSet = $selection->selectionSet;
                 }
 
-                $this->splitSelections($subSelectionSet, $selections);
-
-                continue;
+                foreach ($this->splitSelections($subSelectionSet) as $subSchema => $subSelections) {
+                    $selections[$subSchema][] = new InlineFragmentNode(
+                        [
+                            'typeCondition' => Parser::namedType($operationType->name()),
+                            'selectionSet' => new SelectionSetNode(['selections' => new NodeList($subSelections)])
+                        ]
+                    );
+                }
             }
 
             if ($selection instanceof FieldNode && Introspection::TYPE_NAME_FIELD_NAME !== $selection->name->value) {
@@ -142,26 +145,18 @@ final readonly class DelegateResolver
                 /// AST of fields of operation type MUST have delegate directive
                 $delegateDirective = DelegateDirective::find($field->astNode);
                 $subSchema = $delegateDirective->subSchema;
-                $operation = $delegateDirective->operation;
-                $selections[$subSchema][$operation] ??= [];
-
-                /// Use inline fragment for resolving multi field nodes.
-                $selections[$subSchema][$operation][] = new InlineFragmentNode(
-                    [
-                        'typeCondition' => Parser::namedType($operationType->name()),
-                        'selectionSet' => new SelectionSetNode([
-                            'selections' => new NodeList([$selection->cloneDeep()])
-                        ])
-                    ]
-                );
+                $selections[$subSchema][] = $selection->cloneDeep();
             }
         }
 
         return $selections;
     }
 
-    private function collectFragments(Type $parentType, SelectionSetNode $selectionSet): array
-    {
+    private function collectFragments(
+        Type $parentType,
+        SelectionSetNode $selectionSet,
+        array &$visitedFragments = []
+    ): array {
         if ($parentType instanceof WrappingType) {
             $parentType = $parentType->getInnermostType();
         }
@@ -174,10 +169,16 @@ final readonly class DelegateResolver
 
             if ($selection instanceof FragmentSpreadNode) {
                 $name = $selection->name->value;
+
+                if (isset($visitedFragments[$name])) {
+                    continue;
+                }
+
                 $fragment = $fragments[$name] = $this->fragments[$name]->cloneDeep();
                 $typename = $fragment->typeCondition->name->value;
                 $type = $this->executionSchema->getType($typename);
                 $subSelectionSet = $fragment->selectionSet;
+                $visitedFragments[$name] = true;
             }
 
             if ($selection instanceof InlineFragmentNode) {
@@ -205,7 +206,7 @@ final readonly class DelegateResolver
             }
 
             if (null !== $type && null !== $subSelectionSet) {
-                $fragments += $this->collectFragments($type, $subSelectionSet);
+                $fragments += $this->collectFragments($type, $subSelectionSet, $visitedFragments);
             }
         }
 
@@ -258,7 +259,7 @@ final readonly class DelegateResolver
 
                 $parentTypename = $parentType->name();
                 $fieldName = $selection->name->value;
-                $fieldAlias = $selection->alias?->value;
+                $fieldAlias = $selection->alias?->value ?? $fieldName;
                 $field = $parentType->getField($fieldName);
 
                 if ($this->relationRegistry->hasRelation($parentTypename, $fieldName)) {
@@ -268,34 +269,34 @@ final readonly class DelegateResolver
                     $operation = $delegateDirective->operation;
                     $relation = $this->relationRegistry->getRelation($parentTypename, $fieldName);
                     $argValues = Values::getArgumentValues($field, $selection, $this->variables);
-                    $relations[$subSchema][$operation][$path][] = [$selection, $argValues, $relation];
+                    $relations[$subSchema][$operation][$path][$fieldAlias][] = [$selection, $argValues, $relation];
 
-                    if (!$relation->argResolver instanceof MandatorySelectionSetProviderInterface) {
-                        unset($selectionSet->selections[$pos]);
+                    unset($selectionSet->selections[$pos]);
 
-                        continue;
-                    }
-
-                    /// Replace it with mandatory fields needed to resolve args.
-                    $selectionSet->selections[$pos] = Parser::fragment(
-                        sprintf(
-                            '... on %s %s',
-                            $parentTypename,
-                            $relation->argResolver->getMandatorySelectionSet($relation)
-                        ),
-                        ['noLocation' => true]
-                    );
-                } else {
-                    $type = $field->getType();
-                    $subSelectionSet = $selection->selectionSet;
-
-                    if (null !== $subSelectionSet) {
-                        /// increase selection path if this field is object
-                        $selectionPath = ltrim(
-                            sprintf('%s.%s', $selectionPath, $fieldAlias ?? $fieldName),
-                            '.'
+                    if ($relation->argResolver instanceof MandatorySelectionSetProviderInterface) {
+                        /// Replace it with mandatory fields needed to resolve args.
+                        $selectionSet->selections[$pos] = Parser::fragment(
+                            sprintf(
+                                '... on %s %s',
+                                $parentTypename,
+                                $relation->argResolver->getMandatorySelectionSet($relation)
+                            ),
+                            ['noLocation' => true]
                         );
                     }
+
+                    continue;
+                }
+
+                $type = $field->getType();
+                $subSelectionSet = $selection->selectionSet;
+
+                if (null !== $subSelectionSet) {
+                    /// increase selection path if this field is object
+                    $selectionPath = ltrim(
+                        sprintf('%s.%s', $selectionPath, $fieldAlias),
+                        '.'
+                    );
                 }
             }
 
@@ -367,7 +368,10 @@ final readonly class DelegateResolver
                 static fn (array $relationResults) => array_filter($relationResults)
             )
             ->then(
-                fn (array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults($result, $relationResults)
+                fn (array $relationResults) => $this->mergeErrorsAndExtensionFromRelationResults(
+                    $result,
+                    $relationResults
+                )
             );
     }
 
@@ -562,46 +566,67 @@ final readonly class DelegateResolver
     ): array {
         $variables = [];
 
-        foreach ($relationFields as $relationField) {
+        foreach ($relationFields as $fieldAlias => $infos) {
+            $alias = $this->getUid();
+
+            /// Value will be replaced after operation executed
+            $objectValue[$alias] = $fieldAlias;
+
             /**
-             * @var FieldNode $field
              * @var array<string, mixed> $args
              * @var Relation $relation
              */
-            [$field, $args, $relation] = $relationField;
+            [, $currentArgs, $relation] = $infos[0]; /// All field selection MUST be the same args and relation.
+
+            $args = $relation->argResolver->resolve($objectValue, $currentArgs, $relation);
             $operationType = $this->executionSchema->getOperationType($relation->operation->value);
             $operationField = $operationType->getField($relation->operationField);
-            $selection = $field->cloneDeep();
+            $selectionArgs = new NodeList([]);
 
-            $aliasOrName = $selection->alias?->value ?? $selection->name->value;
-            $alias = $this->getUid();
-            $selection->alias = Parser::name($alias, ['noLocation' => true]);
-            $selection->name = Parser::name($relation->operationField, ['noLocation' => true]);
-            $selection->arguments = new NodeList([]);
-            $arguments = $relation->argResolver->resolve($objectValue, $args, $relation);
-
-            foreach ($operationField->args as $operationFieldArg) {
-                if (!array_key_exists($operationFieldArg->name, $arguments)) {
+            foreach ($operationField->args as $fieldArg) {
+                if (!array_key_exists($fieldArg->name, $args)) {
                     continue;
                 }
 
                 $varName = $this->getUid();
-                $varValue = $arguments[$operationFieldArg->name];
+                $varValue = $args[$fieldArg->name];
                 $variables[$varName] = $varValue;
-                $selection->arguments[] = Parser::argument(
-                    sprintf('%s: $%s', $operationFieldArg->name, $varName),
+                $selectionArgs[] = Parser::argument(
+                    sprintf('%s: $%s', $fieldArg->name, $varName),
                     ['noLocation' => true]
                 );
                 $operation->variableDefinitions[] = Parser::variableDefinition(
-                    sprintf('$%s: %s', $varName, $operationFieldArg->getType()->toString()),
+                    sprintf('$%s: %s', $varName, $fieldArg->getType()->toString()),
                     ['noLocation' => true]
                 );
             }
 
-            $operation->selectionSet->selections[] = $selection;
+            $useInlineFragment = false;
 
-            /// Value will be replaced after operation executed
-            $objectValue[$alias] = $aliasOrName;
+            foreach ($infos as $info) {
+                /** @var FieldNode $field */
+                [$field,] = $info;
+
+                $selection = $field->cloneDeep();
+
+                $selection->alias = Parser::name($alias, ['noLocation' => true]);
+                $selection->name = Parser::name($relation->operationField, ['noLocation' => true]);
+                $selection->arguments = $selectionArgs;
+
+                if (!$useInlineFragment) {
+                    $operation->selectionSet->selections[] = $selection;
+                } else {
+                    /// use inline fragment for resolving multi field nodes
+                    $operation->selectionSet->selections[] = new InlineFragmentNode(
+                        [
+                            'typeCondition' => Parser::namedType($operationType->name()),
+                            'selectionSet' => new SelectionSetNode(['selections' => [$selection]])
+                        ]
+                    );
+                }
+
+                $useInlineFragment = true;
+            }
         }
 
         return $variables;
@@ -660,8 +685,10 @@ final readonly class DelegateResolver
      * @param ExecutionResult[][]|ExecutionResult[] $relationResults
      * @return ExecutionResult
      */
-    private function mergeErrorsAndExtensionFromRelationResults(ExecutionResult $result, array $relationResults): ExecutionResult
-    {
+    private function mergeErrorsAndExtensionFromRelationResults(
+        ExecutionResult $result,
+        array $relationResults
+    ): ExecutionResult {
         foreach ($relationResults as $relationResult) {
             $result->extensions = array_merge(
                 $result->extensions ?? [],
