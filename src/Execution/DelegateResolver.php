@@ -133,7 +133,9 @@ final readonly class DelegateResolver
                     $selections[$subSchema][] = new InlineFragmentNode(
                         [
                             'typeCondition' => Parser::namedType($operationType->name()),
-                            'selectionSet' => new SelectionSetNode(['selections' => new NodeList($subSelections)])
+                            'selectionSet' => new SelectionSetNode(
+                                ['selections' => new NodeList($subSelections)]
+                            )
                         ]
                     );
                 }
@@ -620,7 +622,9 @@ final readonly class DelegateResolver
                     $operation->selectionSet->selections[] = new InlineFragmentNode(
                         [
                             'typeCondition' => Parser::namedType($operationType->name()),
-                            'selectionSet' => new SelectionSetNode(['selections' => [$selection]])
+                            'selectionSet' => new SelectionSetNode(
+                                ['selections' => new NodeList([$selection])]
+                            )
                         ]
                     );
                 }
