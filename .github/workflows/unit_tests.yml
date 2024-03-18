@@ -1,0 +1,38 @@
+name: Unit Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: ~
+
+jobs:
+  unit_tests:
+    strategy:
+      matrix: 
+        php:
+          - '8.2'
+          - '8.3'
+
+    runs-on: ubuntu-latest
+
+    name: "PHP ${{ matrix.php }} tests"
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: pcov
+
+      - uses: "ramsey/composer-install@v2"
+
+      - run: ./vendor/bin/phpunit
+
+      - uses: codecov/codecov-action@v2
+        with:
+          name: "phpunit-php${{ matrix.php }}"
+          flags: phpunit
+          fail_ci_if_error: true
+        continue-on-error: true
