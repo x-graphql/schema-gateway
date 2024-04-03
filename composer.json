@@ -9,7 +9,7 @@
         "symfony/cache": "^7.0",
         "symfony/http-client": "^7.0",
         "symplify/easy-coding-standard": "^12.1",
-        "x-graphql/http-schema": "^0.7.0"
+        "x-graphql/http-schema": "^0.8.0"
     },
     "license": "MIT",
     "autoload": {
@@ -27,7 +27,7 @@
         "php": ">=8.2",
         "psr/simple-cache": "^2.0 || ^3.0",
         "webonyx/graphql-php": "^15.9",
-        "x-graphql/delegate-execution": "^0.8.0",
+        "x-graphql/delegate-execution": "^0.9.0",
         "x-graphql/utils": ">=0.2.0"
     },
     "config": {
