@@ -7,19 +7,16 @@ namespace XGraphQL\SchemaGateway;
 use GraphQL\Error\Error;
 use GraphQL\Error\SerializationError;
 use GraphQL\Type\Schema;
-use GraphQL\Utils\AST;
 use GraphQL\Utils\BuildSchema;
-use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
 use XGraphQL\DelegateExecution\ErrorsReporterInterface;
 use XGraphQL\DelegateExecution\Execution;
+use XGraphQL\SchemaCache\SchemaCache;
 use XGraphQL\SchemaGateway\AST\ASTBuilder;
 use XGraphQL\SchemaGateway\Execution\ExecutionDelegator;
 
 final class SchemaGatewayFactory
 {
-    public const CACHE_KEY = '_x_graphql_ast_schema_gateway';
-
     /**
      * @throws Error
      * @throws \ReflectionException
@@ -30,29 +27,23 @@ final class SchemaGatewayFactory
     public static function create(
         iterable $subSchemas,
         iterable $relations = [],
-        CacheInterface $cache = null,
+        SchemaCache $cache = null,
         ErrorsReporterInterface $errorsReporter = null,
     ): Schema {
         $subSchemasRegistry = new SubSchemaRegistry($subSchemas);
         $relationsRegistry = new RelationRegistry($relations);
+        $schema = $cache?->load();
 
-        if (!$cache?->has(self::CACHE_KEY)) {
+        if (null === $schema) {
             $astBuilder = new ASTBuilder($subSchemasRegistry, $relationsRegistry);
             $ast = $astBuilder->build();
-            $astNormalized = AST::toArray($ast);
+            $schema = BuildSchema::buildAST($ast, options: ['assumeValidSDL' => true]);
 
-            $cache?->set(self::CACHE_KEY, $astNormalized);
-        } else {
-            $astNormalized = $cache->get(self::CACHE_KEY);
-            $ast = AST::fromArray($astNormalized);
+            $cache?->save($schema);
         }
-
-        $schema = BuildSchema::buildAST($ast, options: ['assumeValidSDL' => true]);
 
         $delegator = new ExecutionDelegator($subSchemasRegistry, $relationsRegistry);
 
-        Execution::delegate($schema, $delegator, $errorsReporter);
-
-        return $schema;
+        return Execution::delegate($schema, $delegator, $errorsReporter);
     }
 }
