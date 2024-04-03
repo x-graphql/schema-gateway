@@ -439,7 +439,8 @@ GQL,
             'remoteCountry',
             RelationOperation::QUERY,
             'country',
-            new class() implements RelationArgumentResolverInterface,
+            new class() implements
+                RelationArgumentResolverInterface,
                 MandatorySelectionSetProviderInterface {
                 public function shouldKeep(string $argumentName, Relation $relation): bool
                 {
@@ -462,7 +463,8 @@ GQL,
             'remoteLanguages',
             RelationOperation::QUERY,
             'languages',
-            new class() implements RelationArgumentResolverInterface,
+            new class() implements
+                RelationArgumentResolverInterface,
                 MandatorySelectionSetProviderInterface {
                 public function shouldKeep(string $argumentName, Relation $relation): bool
                 {
@@ -508,7 +510,8 @@ GQL,
             'remoteCountry',
             RelationOperation::QUERY,
             'country',
-            new class() implements RelationArgumentResolverInterface,
+            new class() implements
+                RelationArgumentResolverInterface,
                 MandatorySelectionSetProviderInterface {
                 public function getMandatorySelectionSet(Relation $relation): string
                 {

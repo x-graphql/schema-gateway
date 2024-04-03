@@ -28,6 +28,7 @@
         "psr/simple-cache": "^2.0 || ^3.0",
         "webonyx/graphql-php": "^15.9",
         "x-graphql/delegate-execution": "^0.9.0",
+        "x-graphql/schema-cache": "^0.1.0",
         "x-graphql/utils": ">=0.2.0"
     },
     "config": {
