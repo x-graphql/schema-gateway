@@ -427,6 +427,25 @@ GQL,
                     ]
                 ]
             ],
+            'use null variable' => [
+                <<<'GQL'
+query($code: ID) {
+  findPersonByLanguageCode(code: $code) {
+    name
+  }
+}
+GQL,
+                [
+                    'code' => null
+                ],
+                [
+                    'data' => [
+                        'findPersonByLanguageCode' => [
+                            'name' => 'John Doe unknown',
+                        ]
+                    ]
+                ],
+            ]
         ];
     }
 
@@ -593,10 +612,10 @@ GQL,
                     'findPersonByLanguageCode' => [
                         'type' => $personType,
                         'args' => [
-                            'code' => Type::nonNull(Type::id()),
+                            'code' => Type::id(),
                         ],
                         'resolve' => fn (mixed $rootValue, array $args) => [
-                            'name' => 'John Doe ' . $args['code'],
+                            'name' => 'John Doe ' . ($args['code'] ?? 'unknown'),
                             'languages' => (array)$args['code'],
                         ],
                     ]
