@@ -329,7 +329,7 @@ final readonly class DelegateResolver
         ];
 
         foreach ($names as $name) {
-            if (isset($this->variables[$name])) {
+            if (array_key_exists($name, $this->variables)) {
                 $variables[$name] = $this->variables[$name];
             }
         }
