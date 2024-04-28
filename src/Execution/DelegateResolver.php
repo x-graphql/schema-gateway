@@ -73,11 +73,8 @@ final readonly class DelegateResolver
             $fragments = $this->collectFragments($operationType, $operation->selectionSet);
             $relations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
 
-            /// All selection set is clear, let collects using variables
-            $variables = $this->collectVariables($operation, $fragments);
-
-            $operation->variableDefinitions = $this->createVariableDefinitions($variables);
-
+            /// All selection set is clear, let resolve variables
+            $variables = $this->resolveVariables($operation, $fragments);
             $promise = $this->delegateToExecute($subSchemaName, $operation, $fragments, $variables);
 
             $promises[] = $promise->then(
@@ -317,10 +314,11 @@ final readonly class DelegateResolver
 
     /**
      * @param OperationDefinitionNode $operation
-     * @param FragmentDefinitionNode[] $fragments
+     * @param array<string, FragmentDefinitionNode> $fragments
      * @return array<string, mixed>
+     * @throws \JsonException
      */
-    private function collectVariables(OperationDefinitionNode $operation, array $fragments): array
+    private function resolveVariables(OperationDefinitionNode $operation, array $fragments): array
     {
         $variables = [];
         $names = [
@@ -328,7 +326,17 @@ final readonly class DelegateResolver
             ...Variable::getVariablesInFragments($fragments),
         ];
 
-        foreach ($names as $name) {
+        foreach ($this->rootOperation->variableDefinitions as $definition) {
+            /** @var VariableDefinitionNode $definition */
+            $name = $definition->variable->name->value;
+
+            if (!in_array($name, $names, true)) {
+                continue;
+            }
+
+            $operation->variableDefinitions[] = $definition->cloneDeep();
+
+            /// Nullable variable may not declare, so we need to check before get
             if (array_key_exists($name, $this->variables)) {
                 $variables[$name] = $this->variables[$name];
             }
@@ -451,10 +459,7 @@ final readonly class DelegateResolver
         $operationType = $this->executionSchema->getOperationType($operation->operation);
         $fragments = $this->collectFragments($operationType, $operation->selectionSet);
         $relationsRelations = $this->collectRelations($operationType, $operation->selectionSet, $fragments);
-        $variables += $this->collectVariables($operation, $fragments);
-        $variableDefinitions = $this->createVariableDefinitions($variables)->merge($operation->variableDefinitions);
-
-        $operation->variableDefinitions = $variableDefinitions;
+        $variables += $this->resolveVariables($operation, $fragments);
 
         return $this
             ->delegateToExecute($subSchemaName, $operation, $fragments, $variables)
@@ -732,22 +737,6 @@ final readonly class DelegateResolver
             'selectionSet' => new SelectionSetNode(['selections' => new NodeList([])]),
             'variableDefinitions' => new NodeList([]),
         ]);
-    }
-
-    private function createVariableDefinitions(array $variables): NodeList
-    {
-        $definitions = new NodeList([]);
-
-        foreach ($this->rootOperation->variableDefinitions as $definition) {
-            /** @var VariableDefinitionNode $definition */
-            $name = $definition->variable->name->value;
-
-            if (array_key_exists($name, $variables)) {
-                $definitions[] = $definition->cloneDeep();
-            }
-        }
-
-        return $definitions;
     }
 
     private function getUid(): string
