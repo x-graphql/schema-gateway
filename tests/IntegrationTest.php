@@ -427,7 +427,7 @@ GQL,
                     ]
                 ]
             ],
-            'use null variable' => [
+            'nullable variable' => [
                 <<<'GQL'
 query($code: ID) {
   findPersonByLanguageCode(code: $code) {
@@ -438,6 +438,23 @@ GQL,
                 [
                     'code' => null
                 ],
+                [
+                    'data' => [
+                        'findPersonByLanguageCode' => [
+                            'name' => 'John Doe unknown',
+                        ]
+                    ]
+                ],
+            ],
+            'not declare nullable variable' => [
+                <<<'GQL'
+query($code: ID) {
+  findPersonByLanguageCode(code: $code) {
+    name
+  }
+}
+GQL,
+                [],
                 [
                     'data' => [
                         'findPersonByLanguageCode' => [
