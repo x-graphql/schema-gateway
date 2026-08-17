@@ -35,6 +35,6 @@ class ExecutionDelegatorTest extends TestCase
         );
 
         $this->assertSame($schemaDelegator->getPromiseAdapter(), $executionDelegator->getPromiseAdapter());
-        $this->assertSame(Executor::getPromiseAdapter(), $executionDelegator->getPromiseAdapter());
+        $this->assertSame(Executor::getDefaultPromiseAdapter(), $executionDelegator->getPromiseAdapter());
     }
 }
