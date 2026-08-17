@@ -9,7 +9,7 @@
         "symfony/cache": "^6.3 || ^7.0 || ^8.0",
         "symfony/http-client": "^6.3 || ^7.0 || ^8.0",
         "symplify/easy-coding-standard": "^12.1",
-        "x-graphql/http-schema": "^0.8.0"
+        "x-graphql/http-schema": "^0.9"
     },
     "license": "MIT",
     "autoload": {
